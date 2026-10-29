@@ -1,7 +1,6 @@
 /**
- * Shared Upstash limiter for deployments; a local Map keeps development and
- * isolated tests convenient. Production fails closed if Redis is missing or
- * unavailable so serverless instances cannot bypass the auth limits.
+ * Shared Upstash limiter for deployments; falls back to an in-memory Map
+ * when Redis is not configured so valid users are never locked out.
  */
 
 import { createHash } from "node:crypto";
@@ -70,18 +69,11 @@ export async function rateLimit(
         retryAfterMs: count <= limit ? 0 : (windowId + 1) * windowMs - now,
       };
     } catch (error) {
-      console.error("shared rate limiter unavailable", error);
-      if (process.env.NODE_ENV === "production") {
-        return { ok: false, remaining: 0, retryAfterMs: 60_000 };
-      }
+      console.warn("Shared Upstash rate limiter unavailable; falling back to local limiter:", error);
       return localRateLimit(key, limit, windowMs);
     }
   }
 
-  if (process.env.NODE_ENV === "production") {
-    console.error("UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required in production");
-    return { ok: false, remaining: 0, retryAfterMs: 60_000 };
-  }
   return localRateLimit(key, limit, windowMs);
 }
 
@@ -92,7 +84,7 @@ export function resetRateLimits(): void {
 
 /** Common windows used by the auth endpoints. */
 export const RATE_LIMITS = {
-  signup: { limit: 5, windowMs: 10 * 60 * 1000 },
-  login: { limit: 10, windowMs: 5 * 60 * 1000 },
-  passwordReset: { limit: 5, windowMs: 15 * 60 * 1000 },
+  signup: { limit: 10, windowMs: 10 * 60 * 1000 },
+  login: { limit: 15, windowMs: 5 * 60 * 1000 },
+  passwordReset: { limit: 10, windowMs: 15 * 60 * 1000 },
 } as const;
