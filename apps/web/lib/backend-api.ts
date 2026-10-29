@@ -28,7 +28,18 @@ function internalToken(userId: string): string {
 }
 
 async function backendFetch<T>(userId: string, path: string, init: RequestInit = {}): Promise<T> {
-  const baseUrl = (process.env.API_SERVICE_URL || process.env.API_BASE_URL || "http://localhost:4000").trim();
+  const isProd = process.env.NODE_ENV === "production";
+  const configuredUrl = (process.env.API_SERVICE_URL || process.env.API_BASE_URL || "").trim();
+  const baseUrl = configuredUrl || (isProd ? "" : "http://localhost:4000");
+
+  if (!baseUrl) {
+    throw new BackendApiError(
+      "API_BASE_URL is not configured in Vercel environment variables. Please add API_BASE_URL pointing to your Render service URL (e.g. https://your-service.onrender.com).",
+      "API_NOT_CONFIGURED",
+      500,
+    );
+  }
+
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${internalToken(userId)}`);
   if (init.body && !headers.has("content-type")) {
@@ -37,11 +48,23 @@ async function backendFetch<T>(userId: string, path: string, init: RequestInit =
   const baseWithSlash = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
   const relativePath = path.startsWith("/") ? path.slice(1) : path;
   const targetUrl = new URL(relativePath, baseWithSlash);
-  const response = await fetch(targetUrl, {
-    ...init,
-    cache: "no-store",
-    headers,
-  });
+
+  let response: Response;
+  try {
+    response = await fetch(targetUrl, {
+      ...init,
+      cache: "no-store",
+      headers,
+    });
+  } catch (error) {
+    console.error(`[backend-api] fetch failed to ${targetUrl.toString()}:`, error);
+    throw new BackendApiError(
+      `Could not reach backend API at ${baseUrl}. Please verify your Render service is Live and reachable.`,
+      "BACKEND_UNREACHABLE",
+      502,
+    );
+  }
+
   const body = (await response.json().catch(() => ({}))) as { error?: string; code?: string } & T;
   if (!response.ok) {
     throw new BackendApiError(
