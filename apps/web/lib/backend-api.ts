@@ -27,14 +27,25 @@ function internalToken(userId: string): string {
   return `${payload}.${signature}`;
 }
 
+function getBackendBaseUrl(): string {
+  const boundUrl = process.env.API_SERVICE_URL;
+  if (boundUrl && boundUrl.trim().length > 0) {
+    return boundUrl.trim();
+  }
+  return process.env.API_BASE_URL?.trim() || "http://localhost:4000";
+}
+
 async function backendFetch<T>(userId: string, path: string, init: RequestInit = {}): Promise<T> {
-  const baseUrl = process.env.API_BASE_URL ?? "http://localhost:4000";
+  const baseUrl = getBackendBaseUrl();
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${internalToken(userId)}`);
   if (init.body && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
-  const response = await fetch(new URL(path, baseUrl), {
+  const cleanBase = baseUrl.replace(/\/+$/, "");
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  const targetUrl = cleanBase.endsWith("/") ? `${cleanBase}${cleanPath.slice(1)}` : `${cleanBase}${cleanPath}`;
+  const response = await fetch(targetUrl, {
     ...init,
     cache: "no-store",
     headers,
