@@ -30,4 +30,4 @@ COPY --from=builder /app/apps/api ./apps/api
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/scripts ./scripts
 EXPOSE 10000
-CMD ["sh", "-c", "node scripts/migrate-deploy.js && npm run api:start"]
+CMD ["npm", "run", "api:start"]
