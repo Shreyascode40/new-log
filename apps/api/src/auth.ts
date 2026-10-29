@@ -4,7 +4,8 @@ import type { IncomingMessage } from "node:http";
 export type ApiIdentity = { userId: string };
 
 function secret(): string {
-  const value = process.env.API_INTERNAL_SECRET;
+  const raw = process.env.API_INTERNAL_SECRET?.trim() ?? "";
+  const value = raw.replace(/^["']|["']$/g, "").trim();
   if (!value || value.length < 32) {
     throw new Error("API_INTERNAL_SECRET must contain at least 32 characters.");
   }

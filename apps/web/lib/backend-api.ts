@@ -16,7 +16,8 @@ export class BackendApiError extends Error {
 }
 
 function internalToken(userId: string): string {
-  const secret = process.env.API_INTERNAL_SECRET;
+  const raw = process.env.API_INTERNAL_SECRET?.trim() ?? "";
+  const secret = raw.replace(/^["']|["']$/g, "").trim();
   if (!secret || secret.length < 32) {
     throw new Error("API_INTERNAL_SECRET must contain at least 32 characters.");
   }
