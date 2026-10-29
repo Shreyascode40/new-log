@@ -100,3 +100,24 @@ export type SponsoredSemester = (typeof SPONSORED_SEMESTERS)[number];
 
 export const ROLES = ["STUDENT", "GUIDE", "HOD"] as const;
 export type Role = (typeof ROLES)[number];
+
+export const SCHEDULE_TERMS = [
+  { term: "SEMESTER_I", label: "Semester I" },
+  { term: "SEMESTER_II", label: "Semester II" },
+] as const;
+export type ScheduleTerm = (typeof SCHEDULE_TERMS)[number]["term"];
+
+export const ACTIVITY_MONTHS = [
+  "june",
+  "july",
+  "august",
+  "september",
+  "october",
+  "november",
+  "december",
+  "january",
+  "february",
+  "march",
+  "may-june",
+] as const;
+export type ActivityMonth = (typeof ACTIVITY_MONTHS)[number];

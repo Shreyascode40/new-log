@@ -1,4 +1,4 @@
-import type { ActivityMonth } from "../../lib/constants";
+import type { ActivityMonth } from "../../apps/api/src/constants";
 
 /**
  * Planned activities per month (SPEC.md B7). Seeded once into

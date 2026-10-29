@@ -1,4 +1,4 @@
-import type { ScheduleTerm } from "../../lib/constants";
+import type { ScheduleTerm } from "../../apps/api/src/constants";
 
 /**
  * The two B.E. Project Schedule tables (SPEC.md B5). Seeded once and then kept

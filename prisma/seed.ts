@@ -8,11 +8,18 @@
  *
  * Run with: npm run db:seed
  */
+import { loadEnvFile } from "node:process";
 import { PrismaClient } from "@prisma/client";
-import { hashPassword } from "../lib/password";
+import { hashPassword } from "../apps/api/src/password";
 import { SCHEDULE_SEED } from "./seed-data/schedule";
 import { ACTIVITY_SEED } from "./seed-data/activity";
 import { REVIEW_SEED } from "./seed-data/reviews";
+
+try {
+  loadEnvFile(".env");
+} catch (error) {
+  if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+}
 
 const prisma = new PrismaClient();
 
@@ -37,10 +44,13 @@ const STUDENTS = [
 ] as const;
 
 async function main() {
+  console.log("Starting seed script...");
   const passwordHash = await hashPassword(DEMO_PASSWORD);
+  console.log("Password hashed. Upserting staff...");
   const now = new Date();
 
   for (const staff of STAFF) {
+    console.log(`- Upserting staff: ${staff.email}`);
     await prisma.user.upsert({
       where: { email: staff.email },
       update: { name: staff.name, role: staff.role, mobile: staff.mobile, active: true },
@@ -55,6 +65,7 @@ async function main() {
       },
     });
   }
+  console.log("Staff upserted. Upserting students...");
 
   for (const student of STUDENTS) {
     const email = `${student.rollNo.toLowerCase()}@apcoer.edu.in`;
@@ -74,12 +85,9 @@ async function main() {
     });
   }
 
-  // ------------------------------------------------------------------ groups
-  // G1 is complete and SUBMITTED so F3 (approve, reject, assign) has data.
-  // G2 is a DRAFT with only its creator, leaving three students free so F4
-  // (create, invite, submit) can be exercised with seeded logins.
-  // Created only when no groups exist, so re-running the seed never duplicates.
+  console.log("Students upserted. Checking groups...");
   if ((await prisma.group.count()) === 0) {
+    console.log("Creating demo groups...");
     const students = await prisma.user.findMany({
       where: { role: "STUDENT" },
       orderBy: { rollNo: "asc" },
