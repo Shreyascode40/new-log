@@ -1,6 +1,7 @@
 node_modules
 .next
 apps/web/.next
+apps/api/dist
 out
 build
 coverage
@@ -12,3 +13,4 @@ var
 *.db
 *.db-journal
 npm-debug.log*
+.commandcode

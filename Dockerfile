@@ -2,34 +2,29 @@
 FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+COPY prisma ./prisma
+RUN npm ci --ignore-scripts
+RUN npx prisma generate
 
-# ---- build (Next.js + Prisma client) ----
+# ---- build (Prisma client + API TypeScript) ----
 FROM node:20-bookworm-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
 RUN npx prisma generate
-RUN npm run build
+RUN npm run api:build
 
-# ---- production runner (app + Chromium for PDF export) ----
+# ---- production runner for Render API service ----
 FROM node:20-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
-    NEXT_TELEMETRY_DISABLED=1 \
-    PORT=3000 \
-    CHROME_PATH=/usr/bin/chromium
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends chromium fonts-liberation \
-  && rm -rf /var/lib/apt/lists/*
+    PORT=10000
 COPY --from=builder /app/package.json /app/package-lock.json ./
 COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/apps/web/.next ./apps/web/.next
-COPY --from=builder /app/apps/web/public ./apps/web/public
+COPY --from=builder /app/apps/api ./apps/api
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/scripts ./scripts
-COPY --from=builder /app/apps/web/next.config.mjs ./apps/web/next.config.mjs
-COPY --from=builder /app/apps/web/package.json ./apps/web/package.json
-EXPOSE 3000
-CMD ["sh", "-c", "node scripts/migrate-deploy.js && npm start"]
+EXPOSE 10000
+CMD ["sh", "-c", "node scripts/migrate-deploy.js && npm run api:start"]

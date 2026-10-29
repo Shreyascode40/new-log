@@ -48,6 +48,10 @@ async function clearIdleMigrationLock(directUrl) {
 }
 
 async function main() {
+  if (!process.env.DATABASE_URL) {
+    console.warn("[migrate] DATABASE_URL is not set; skipping migrations.");
+    return;
+  }
   await clearIdleMigrationLock(process.env.DIRECT_URL);
   execSync("npx prisma migrate deploy", { stdio: "inherit", env: process.env });
 }
