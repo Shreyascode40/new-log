@@ -52,11 +52,16 @@ async function main() {
     console.warn("[migrate] DATABASE_URL is not set; skipping migrations.");
     return;
   }
-  await clearIdleMigrationLock(process.env.DIRECT_URL);
-  execSync("npx prisma migrate deploy", { stdio: "inherit", env: process.env });
+  try {
+    await clearIdleMigrationLock(process.env.DIRECT_URL);
+    execSync("npx prisma migrate deploy", { stdio: "inherit", env: process.env });
+    console.log("[migrate] prisma migrate deploy finished successfully.");
+  } catch (error) {
+    console.warn("[migrate] Migration step threw an error: " + error.message);
+    console.warn("[migrate] Continuing startup so the API service remains available.");
+  }
 }
 
 main().catch((error) => {
-  console.error(error);
-  process.exit(1);
+  console.error("[migrate] Fatal error in migrate runner:", error);
 });
