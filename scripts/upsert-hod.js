@@ -7,9 +7,9 @@ const prisma = new PrismaClient();
 
 async function main() {
   const args = process.argv.slice(2);
-  const email = (args[0] || "hod@apcoer.edu.in").trim().toLowerCase();
-  const password = args[1] || "Password@123";
-  const name = args[2] || "Dr. Anil Deshmukh";
+  const email = (args[0] || "rama.gaikwad@abmspcoerpune.org").trim().toLowerCase();
+  const password = args[1] || "hod@apcoer12";
+  const name = args[2] || "Dr.Rama Gaikwad";
 
   console.log(`Setting up HOD account...`);
   console.log(`Email: ${email}`);
