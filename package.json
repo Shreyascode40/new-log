@@ -28,7 +28,10 @@
     "storage:migrate-private": "tsx scripts/migrate-uploads-to-private.ts"
   },
   "dependencies": {
-    "@prisma/client": "^5.22.0"
+    "@prisma/client": "^5.22.0",
+    "next": "^14.2.35",
+    "react": "^18",
+    "react-dom": "^18"
   },
   "devDependencies": {
     "prisma": "^5.22.0",

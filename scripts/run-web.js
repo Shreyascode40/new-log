@@ -1,4 +1,5 @@
 const path = require("node:path");
+const fs = require("node:fs");
 const { spawn } = require("node:child_process");
 
 const repoRoot = path.resolve(__dirname, "..");
@@ -27,4 +28,13 @@ next.on("error", (error) => {
 });
 next.on("exit", (code, signal) => {
   process.exitCode = code ?? (signal ? 1 : 0);
+  if (command === "build" && process.exitCode === 0) {
+    try {
+      const src = path.join(repoRoot, "apps", "web", ".next");
+      const dst = path.join(repoRoot, ".next");
+      if (fs.existsSync(src) && !fs.existsSync(dst)) {
+        fs.symlinkSync(src, dst, "junction");
+      }
+    } catch {}
+  }
 });
