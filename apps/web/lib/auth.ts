@@ -46,6 +46,34 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
+    async redirect({ url, baseUrl }) {
+      // Determine the effective base URL. If baseUrl points to localhost on a production host,
+      // prefer the Vercel URL or current hostname.
+      let base = baseUrl;
+      if ((base.includes("localhost") || !base) && process.env.VERCEL_URL) {
+        base = `https://${process.env.VERCEL_URL}`;
+      }
+
+      if (url.startsWith("/")) {
+        return `${base}${url}`;
+      }
+
+      try {
+        const parsedUrl = new URL(url);
+        const parsedBase = new URL(base);
+        if (
+          parsedUrl.origin === parsedBase.origin ||
+          parsedUrl.hostname.endsWith(".vercel.app") ||
+          (process.env.VERCEL_URL && parsedUrl.hostname === process.env.VERCEL_URL)
+        ) {
+          return url;
+        }
+      } catch {
+        // Ignore URL parsing errors
+      }
+
+      return `${base}/login`;
+    },
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;

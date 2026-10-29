@@ -25,6 +25,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "node scripts/migrate-deploy.js",
     "db:seed": "tsx prisma/seed.ts",
+    "hod:upsert": "node scripts/upsert-hod.js",
     "storage:migrate-private": "tsx scripts/migrate-uploads-to-private.ts"
   },
   "dependencies": {
