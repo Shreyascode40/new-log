@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentUser } from "@/lib/permissions";
 import { AppError } from "@/lib/errors";
+import { BackendApiError } from "@/lib/backend-api";
 import { generateGroupPdf } from "@/lib/services/pdf";
 
 export const runtime = "nodejs";
@@ -38,6 +39,9 @@ export async function GET(request: NextRequest, { params }: { params: { groupId:
       },
     });
   } catch (error) {
+    if (error instanceof BackendApiError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     if (error instanceof AppError) {
       const status =
         error.code === "PDF_UNAVAILABLE"

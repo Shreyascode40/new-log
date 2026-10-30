@@ -69,11 +69,34 @@ export async function renderGroupPdf(groupId: string, transport: PdfTransport): 
   });
   try {
     const page = await browser.newPage();
-    await page.setExtraHTTPHeaders({ cookie: transport.cookie });
     const printUrl = new URL(`/print/${encodeURIComponent(groupId)}`, transport.baseUrl);
+
+    if (transport.cookie) {
+      const cookieList = transport.cookie
+        .split(";")
+        .map((c) => c.trim())
+        .filter(Boolean)
+        .map((c) => {
+          const eqIdx = c.indexOf("=");
+          if (eqIdx === -1) return null;
+          return {
+            name: c.slice(0, eqIdx).trim(),
+            value: c.slice(eqIdx + 1).trim(),
+            domain: printUrl.hostname,
+            path: "/",
+          };
+        })
+        .filter(Boolean) as Array<{ name: string; value: string; domain: string; path: string }>;
+
+      if (cookieList.length > 0) {
+        await page.setCookie(...cookieList);
+      }
+      await page.setExtraHTTPHeaders({ cookie: transport.cookie });
+    }
+
     const response = await page.goto(printUrl.toString(), {
-      waitUntil: "networkidle0",
-      timeout: 90000,
+      waitUntil: "domcontentloaded",
+      timeout: 120000,
     });
     if (!response) {
       throw new AppError("PDF_RENDER_FAILED", "The print page did not respond.");
@@ -91,9 +114,12 @@ export async function renderGroupPdf(groupId: string, transport: PdfTransport): 
         "The print page redirected away. The session may have expired; please sign in and try again.",
       );
     }
-    if (!(await page.$('[data-pdf-ready="1"]'))) {
-      throw new AppError("PDF_RENDER_FAILED", "The print page did not finish rendering.");
-    }
+    await page.waitForSelector('[data-pdf-ready="1"]', { timeout: 30000 });
+    await page.evaluate(async () => {
+      if (document.fonts?.ready) {
+        await document.fonts.ready;
+      }
+    });
     const pdf = await page.pdf({
       format: "A4",
       printBackground: true,

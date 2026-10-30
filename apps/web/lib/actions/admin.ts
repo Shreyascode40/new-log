@@ -2,6 +2,7 @@
 
 import { getCurrentUser, type CurrentUser } from "@/lib/permissions";
 import { AppError } from "@/lib/errors";
+import { BackendApiError } from "@/lib/backend-api";
 import {
   approveGroup,
   assignGuide,
@@ -31,6 +32,7 @@ async function hodActor(): Promise<CurrentUser> {
 
 function toError(error: unknown): string {
   if (error instanceof AppError) return error.message;
+  if (error instanceof BackendApiError) return error.message;
   console.error("admin action failed", error);
   return "Something went wrong. Please try again.";
 }
