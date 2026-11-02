@@ -23,6 +23,7 @@ import { getFinalSheet } from "@/lib/services/final";
 import { getExaminerSheet } from "@/lib/services/examiner";
 import { getSponsoredSheet } from "@/lib/services/sponsored";
 import { rateLimit } from "@/lib/rate-limit";
+import { resolveStudentPhotoDataUri } from "@/lib/services/photo-resolver";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -205,6 +206,27 @@ export async function GET(
         getLogoBase64("cover/college-building.png") ||
         getLogoBase64("cover/college-building.webp"),
     };
+
+    // 4. Pre-resolve student profile photos to base64 Data URIs so @react-pdf/renderer
+    // embeds them directly in memory without making client-side requests or failing on private/relative URLs.
+    if (
+      payload.groupInfo &&
+      typeof payload.groupInfo === "object" &&
+      Array.isArray((payload.groupInfo as Record<string, unknown>).members)
+    ) {
+      const rawMembers = (payload.groupInfo as { members: Array<Record<string, unknown>> }).members;
+      const resolvedMembers = await Promise.all(
+        rawMembers.map(async (member) => {
+          const rawPhotoUrl = typeof member.photoUrl === "string" ? member.photoUrl : null;
+          const photoDataUri = await resolveStudentPhotoDataUri(rawPhotoUrl);
+          return {
+            ...member,
+            photoUrl: photoDataUri,
+          };
+        }),
+      );
+      (payload.groupInfo as { members: unknown[] }).members = resolvedMembers;
+    }
 
     return NextResponse.json({
       success: true,

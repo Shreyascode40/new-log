@@ -661,9 +661,10 @@ export function LogbookPdfDocument({ data }: { data: LogbookPdfData }) {
                         alignItems: "center",
                         justifyContent: "center",
                         backgroundColor: "#fafafa",
+                        overflow: "hidden",
                       }}
                     >
-                      {member?.photoUrl ? (
+                      {member?.photoUrl && (member.photoUrl.startsWith("data:image/") || member.photoUrl.startsWith("http")) ? (
                         <Image
                           src={member.photoUrl}
                           style={{ width: "100%", height: "100%", objectFit: "cover" }}
