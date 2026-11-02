@@ -48,3 +48,6 @@ yarn-error.log*
 next-env.d.ts
 
 .commandcode/
+
+/scripts/uat-screenshots/
+/scripts/uat-verification-results.json
