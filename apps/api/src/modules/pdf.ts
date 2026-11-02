@@ -3,6 +3,13 @@ import { prisma } from "../db.js";
 import { toJson } from "../json.js";
 import { ApiDomainError } from "../errors.js";
 import { getGroupCompletion, type GroupCompletion } from "../completion/index.js";
+import { getTopicSheet } from "./topic.js";
+import { getMonthChart, ACTIVITY_MONTHS, type ActivityMonth } from "./activity-chart.js";
+import { getContentPage, getChecklist, listCompetitions, listPapers, listNotes } from "./records.js";
+import { getReviewSheet } from "./review.js";
+import { getEvaluationSheet } from "./evaluation.js";
+import { getExaminerSheet } from "./examiner.js";
+import { getSponsoredSheet } from "./sponsored.js";
 
 /**
  * Final PDF Service & Gate (F16, SPEC.md A2/A6).
@@ -108,6 +115,22 @@ export async function recordPdfExport(
 ): Promise<PdfExportResult> {
   await checkPdfGate(actor, groupId);
 
+  // Duplicate-generation protection: if an export for this group was recorded within the last 15 seconds, return it
+  const recent = await prisma.pdfExport.findFirst({
+    where: {
+      groupId,
+      generatedAt: { gte: new Date(Date.now() - 15000) },
+    },
+    orderBy: { generatedAt: "desc" },
+  });
+  if (recent) {
+    return {
+      exportId: recent.id,
+      downloadUrl: `/api/pdf/${recent.id}`,
+      fileUrl: recent.fileUrl,
+    };
+  }
+
   const result = await prisma.$transaction(
     async (tx) => {
       const saved = await tx.pdfExport.create({
@@ -131,6 +154,116 @@ export async function recordPdfExport(
   );
 
   return result;
+}
+
+const REVIEW_ORDER = [
+  "REVIEW_I",
+  "REVIEW_II",
+  "FINAL_DESIGN",
+  "REVIEW_I_MODELING",
+  "REVIEW_II_CODING",
+  "FINAL_VALIDATION",
+  "REPORT_WRITING",
+] as const;
+
+const SCHEDULE_TERMS = [
+  { term: "SEMESTER_I", label: "Semester I" },
+  { term: "SEMESTER_II", label: "Semester II" },
+] as const;
+
+export async function getGroupLogbookBundle(actor: PdfActor, groupId: string) {
+  const { group } = await checkPdfGate(actor, groupId);
+
+  const [
+    groupRecord,
+    scheduleItems,
+    topics,
+    monthCharts,
+    rtm,
+    cost,
+    reviews,
+    mock,
+    finall,
+    examinerI,
+    examinerII,
+    checklistI,
+    checklistII,
+    competitions,
+    papers,
+    notes,
+    sponsored,
+  ] = await Promise.all([
+    prisma.group.findUnique({
+      where: { id: groupId },
+      include: {
+        guide: { select: { name: true } },
+        members: { orderBy: { createdAt: "asc" } },
+      },
+    }),
+    prisma.scheduleItem.findMany({ orderBy: { sortOrder: "asc" } }),
+    getTopicSheet(actor, groupId),
+    Promise.all(
+      (ACTIVITY_MONTHS as readonly ActivityMonth[]).map((month) =>
+        getMonthChart(actor, groupId, month),
+      ),
+    ),
+    getContentPage(groupId, "RTM"),
+    getContentPage(groupId, "COST"),
+    Promise.all(
+      REVIEW_ORDER.map((reviewType) => getReviewSheet(groupId, reviewType)),
+    ),
+    getEvaluationSheet(groupId, "MOCK_T1"),
+    getEvaluationSheet(groupId, "FINAL_T2"),
+    getExaminerSheet(groupId, "TERM_I"),
+    getExaminerSheet(groupId, "TERM_II"),
+    getChecklist(groupId, "TERM_I"),
+    getChecklist(groupId, "TERM_II"),
+    listCompetitions(groupId),
+    listPapers(groupId),
+    listNotes(groupId),
+    group.isSponsored ? getSponsoredSheet(groupId) : Promise.resolve(null),
+  ]);
+
+  if (!groupRecord) throw new ApiDomainError("GROUP_NOT_FOUND", "Group not found", 404);
+
+  const terms = SCHEDULE_TERMS.map(({ term, label }) => ({
+    term,
+    title: label,
+    items: scheduleItems
+      .filter((item) => item.term === term)
+      .map((item) => ({
+        id: item.id,
+        term: item.term,
+        sortOrder: item.sortOrder,
+        description: item.description,
+        targetDate: item.date ?? null,
+        completionDate: item.note ?? null,
+      })),
+  }));
+
+  return {
+    groupInfo: {
+      ...groupRecord,
+      guide: groupRecord.guide,
+      members: groupRecord.members,
+    },
+    terms,
+    topics,
+    monthCharts,
+    rtm,
+    cost,
+    reviews,
+    mock,
+    final: finall,
+    examinerI,
+    examinerII,
+    checklistI,
+    checklistII,
+    competitions,
+    papers,
+    notes,
+    sponsored,
+  };
 }
 
 export async function getPdfExport(actor: PdfActor, exportId: string) {

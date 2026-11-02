@@ -8,13 +8,14 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PdfDownloadButton } from "@/components/student/pdf-download-button";
 
 export const metadata = { title: "Final PDF — Digital BE Log Book" };
 
 /**
  * Student PDF status gate (F16). Shows completion, permission and past
- * generations; the download button hits the gated API route, which re-checks
- * everything and returns 403 with the missing list otherwise.
+ * generations; uses client-side @react-pdf/renderer for robust A4 PDF generation
+ * with instant download and archiving to Supabase Storage.
  */
 export default async function StudentPdfPage() {
   const user = await requireRole("STUDENT");
@@ -35,8 +36,7 @@ export default async function StudentPdfPage() {
         <CardHeader>
           <CardTitle>Final PDF</CardTitle>
           <CardDescription>
-            Generates the whole logbook (cover to notes) as an A4 PDF from the same
-            sheets you see on screen.
+            Generates the whole logbook (cover to notes) as an A4 PDF document.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
@@ -65,26 +65,19 @@ export default async function StudentPdfPage() {
               </AlertDescription>
             </Alert>
           ) : null}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-3 pt-2">
             <Button asChild variant="outline" size="sm">
               <a href={`/print/${membership.groupId}`} target="_blank" rel="noreferrer">
                 Preview print version
               </a>
             </Button>
-            {exports.length > 0 ? (
-              <Button asChild size="sm">
-                <a href={`/api/pdf/${exports[0].id}`} download>
-                  Download PDF
-                </a>
-              </Button>
-            ) : null}
-            {open ? (
-              <Button asChild variant={exports.length > 0 ? "outline" : "default"} size="sm">
-                <a href={`/api/groups/${membership.groupId}/pdf`} download>
-                  {exports.length > 0 ? "Regenerate & download PDF" : "Generate & download PDF"}
-                </a>
-              </Button>
-            ) : null}
+            <PdfDownloadButton
+              groupId={membership.groupId}
+              groupNo={group.groupNo}
+              hasExistingExport={exports.length > 0}
+              latestExportId={exports[0]?.id}
+              allowedToGenerate={open}
+            />
           </div>
         </CardContent>
       </Card>

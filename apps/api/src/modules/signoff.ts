@@ -34,6 +34,9 @@ async function sign(
 ) {
   const membership = await getStudentGroup(actor);
   const target = await getTarget(membership.groupId, memberId);
+  if (target.userId !== actor.id) {
+    throw new ApiDomainError("FORBIDDEN", "You can only digitally sign the undertaking and rules for yourself", 403);
+  }
   const current = target[field];
   const resultKey = field === "rulesAckAt" ? "acknowledgedAt" : "acceptedAt";
   if (current) return { [resultKey]: current.toISOString() };

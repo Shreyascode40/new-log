@@ -6,6 +6,7 @@ import { z } from "zod";
 import { prisma } from "../db.js";
 import { fromJson, toJson } from "../json.js";
 import { ApiDomainError } from "../errors.js";
+import { validateDocumentBytes } from "../file-validation.js";
 import {
   CHECKLIST_ITEMS,
   COMPETITION_TYPES,
@@ -105,13 +106,11 @@ async function persistDocument(
   subdir: string,
   baseName: string,
 ): Promise<string> {
-  if (!ALLOWED_DOC_TYPES.includes(contentType as (typeof ALLOWED_DOC_TYPES)[number])) {
-    throw new ApiDomainError("INVALID_FILE", "Only PDF, JPG or PNG files can be uploaded", 400);
-  }
+  const verifiedType = validateDocumentBytes(bytes);
   if (bytes.byteLength > MAX_DOC_BYTES) {
     throw new ApiDomainError("FILE_TOO_BIG", "Files must be at most 10 MB", 400);
   }
-  const ext = contentType === "application/pdf" ? "pdf" : contentType === "image/png" ? "png" : "jpg";
+  const ext = verifiedType === "application/pdf" ? "pdf" : verifiedType === "image/png" ? "png" : "jpg";
   const safeBase = baseName.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 60) || "file";
   const fileName = `${safeBase}-${Date.now()}-${randomBytes(4).toString("hex")}.${ext}`;
 
@@ -128,7 +127,7 @@ async function persistDocument(
       headers: {
         authorization: `Bearer ${serviceKey}`,
         apikey: serviceKey,
-        "content-type": contentType,
+        "content-type": verifiedType,
         "x-upsert": "false",
       },
       body: new Uint8Array(bytes),
@@ -145,6 +144,22 @@ async function persistDocument(
   await mkdir(uploadDir, { recursive: true });
   await writeFile(path.join(uploadDir, fileName), bytes);
   return `/media/${subdir}/${fileName}`;
+}
+
+async function assertCanViewRecords(actor: RecordsActor, groupId: string): Promise<void> {
+  if (actor.role === "HOD" || actor.role === "SYSTEM" || actor.id === "system") {
+    return;
+  }
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: { guideId: true, members: { select: { userId: true } } },
+  });
+  if (!group) throw new ApiDomainError("GROUP_NOT_FOUND", "Group not found", 404);
+  const isMember = group.members.some((m) => m.userId === actor.id);
+  const isAssignedGuide = actor.role === "GUIDE" && group.guideId === actor.id;
+  if (!isMember && !isAssignedGuide) {
+    throw new ApiDomainError("FORBIDDEN", "You cannot view this group's records", 403);
+  }
 }
 
 async function myStudentGroup(actor: RecordsActor) {
@@ -195,7 +210,9 @@ export async function listCompetitions(
   actorOrGroupId: RecordsActor | string,
   maybeGroupId?: string,
 ) {
+  const actor = typeof actorOrGroupId === "string" ? null : actorOrGroupId;
   const groupId = typeof actorOrGroupId === "string" ? actorOrGroupId : maybeGroupId!;
+  if (actor) await assertCanViewRecords(actor, groupId);
   return prisma.competition.findMany({ where: { groupId }, orderBy: { createdAt: "asc" } });
 }
 
@@ -277,7 +294,9 @@ export async function listPapers(
   actorOrGroupId: RecordsActor | string,
   maybeGroupId?: string,
 ) {
+  const actor = typeof actorOrGroupId === "string" ? null : actorOrGroupId;
   const groupId = typeof actorOrGroupId === "string" ? actorOrGroupId : maybeGroupId!;
+  if (actor) await assertCanViewRecords(actor, groupId);
   return prisma.paperPublication.findMany({ where: { groupId }, orderBy: { createdAt: "asc" } });
 }
 
@@ -362,8 +381,11 @@ export async function getChecklist(
   groupIdOrTerm: string,
   maybeTerm?: string,
 ): Promise<ChecklistData> {
+  const actor = typeof actorOrGroupId === "string" ? null : actorOrGroupId;
   const groupId = typeof actorOrGroupId === "string" ? actorOrGroupId : groupIdOrTerm;
   const term = typeof actorOrGroupId === "string" ? groupIdOrTerm : maybeTerm!;
+
+  if (actor) await assertCanViewRecords(actor, groupId);
 
   const parsed = checklistTermSchema.safeParse(term);
   if (!parsed.success) throw new ApiDomainError("INVALID_INPUT", "Unknown checklist term", 400);
@@ -430,8 +452,11 @@ export async function getContentPage(
   groupIdOrType: string,
   maybeType?: "RTM" | "COST",
 ) {
+  const actor = typeof actorOrGroupId === "string" ? null : actorOrGroupId;
   const groupId = typeof actorOrGroupId === "string" ? actorOrGroupId : groupIdOrType;
   const type = (typeof actorOrGroupId === "string" ? groupIdOrType : maybeType!) as "RTM" | "COST";
+
+  if (actor) await assertCanViewRecords(actor, groupId);
 
   const row = await prisma.contentPage.upsert({
     where: { groupId_type_sortOrder: { groupId, type, sortOrder: 0 } },
@@ -499,7 +524,9 @@ export async function listNotes(
   actorOrGroupId: RecordsActor | string,
   maybeGroupId?: string,
 ) {
+  const actor = typeof actorOrGroupId === "string" ? null : actorOrGroupId;
   const groupId = typeof actorOrGroupId === "string" ? actorOrGroupId : maybeGroupId!;
+  if (actor) await assertCanViewRecords(actor, groupId);
   return prisma.contentPage.findMany({
     where: { groupId, type: "NOTE" },
     orderBy: { sortOrder: "asc" },
@@ -571,6 +598,7 @@ export type GroupRecords = {
 };
 
 export async function getGroupRecords(actor: RecordsActor, groupId: string): Promise<GroupRecords> {
+  await assertCanViewRecords(actor, groupId);
   const group = await prisma.group.findUnique({ where: { id: groupId } });
   if (!group) throw new ApiDomainError("GROUP_NOT_FOUND", "Group not found", 404);
   const [competitions, papers, termI, termII, rtm, cost, notes] = await Promise.all([

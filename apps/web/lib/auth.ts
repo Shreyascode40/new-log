@@ -61,9 +61,10 @@ export const authOptions: NextAuthOptions = {
       try {
         const parsedUrl = new URL(url);
         const parsedBase = new URL(base);
+        // Only allow exact origin match, or exact matching deployed Vercel hostname.
+        // Arbitrary external .vercel.app subdomains are strictly forbidden.
         if (
           parsedUrl.origin === parsedBase.origin ||
-          parsedUrl.hostname.endsWith(".vercel.app") ||
           (process.env.VERCEL_URL && parsedUrl.hostname === process.env.VERCEL_URL)
         ) {
           return url;

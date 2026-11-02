@@ -31,7 +31,7 @@ function internalToken(userId: string): string {
 async function backendFetch<T>(userId: string, path: string, init: RequestInit = {}): Promise<T> {
   const isProd = process.env.NODE_ENV === "production";
   const configuredUrl = (process.env.API_SERVICE_URL || process.env.API_BASE_URL || "").trim();
-  const baseUrl = configuredUrl || (isProd ? "" : "http://localhost:4000");
+  const baseUrl = configuredUrl || (isProd ? "" : "http://127.0.0.1:4000");
 
   if (!baseUrl) {
     throw new BackendApiError(

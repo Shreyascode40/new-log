@@ -143,4 +143,9 @@ async function main() {
   console.log("Counts Summary:", JSON.stringify(backupData.counts, null, 2));
 }
 
-main().catch(console.error).finally(() => prisma.$disconnect());
+main()
+  .catch((err) => {
+    console.error("=== BACKUP FAILED ===", err);
+    process.exit(1);
+  })
+  .finally(() => prisma.$disconnect());

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { prisma } from "../db.js";
 import { fromJson, toJson } from "../json.js";
 import { ApiDomainError } from "../errors.js";
+import { validateImageBytes } from "../file-validation.js";
 import {
   SPONSOR_PARAMETERS,
   SPONSOR_RATINGS,
@@ -113,13 +114,11 @@ async function saveUploadBuffer(
   contentType: string,
   bytes: Buffer,
 ): Promise<string> {
-  if (!ALLOWED_PHOTO_TYPES.includes(contentType as (typeof ALLOWED_PHOTO_TYPES)[number])) {
-    throw new ApiDomainError("INVALID_FILE", "The seal scan must be a JPG or PNG image", 400);
-  }
+  const verifiedType = validateImageBytes(bytes);
   if (bytes.byteLength > MAX_PHOTO_BYTES) {
     throw new ApiDomainError("FILE_TOO_BIG", "The seal scan must be at most 2 MB", 400);
   }
-  const ext = contentType === "image/png" ? "png" : "jpg";
+  const ext = verifiedType === "image/png" ? "png" : "jpg";
   const safeBase = baseName.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 60) || "file";
   const fileName = `${safeBase}-${Date.now()}-${randomBytes(4).toString("hex")}.${ext}`;
 
@@ -136,7 +135,7 @@ async function saveUploadBuffer(
       headers: {
         authorization: `Bearer ${serviceKey}`,
         apikey: serviceKey,
-        "content-type": contentType,
+        "content-type": verifiedType,
         "x-upsert": "false",
       },
       body: new Uint8Array(bytes),

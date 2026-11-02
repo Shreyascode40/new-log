@@ -141,6 +141,7 @@ import {
   authorizeFileAccess,
   authorizeMediaPdf,
   checkPdfGate,
+  getGroupLogbookBundle,
   getPdfExport,
   recordPdfExport,
   listGroupPdfExports,
@@ -990,12 +991,15 @@ async function handleApiRequest(request: IncomingMessage, response: ServerRespon
     }
     const actor: PdfActor = { id: user.id, role: user.role };
     const gateMatch = pathname.match(/^\/v1\/pdf\/groups\/([^/]+)\/gate$/);
+    const bundleMatch = pathname.match(/^\/v1\/pdf\/groups\/([^/]+)\/bundle$/);
     const exportMatch = pathname.match(/^\/v1\/pdf\/exports\/([^/]+)$/);
     const exportsListMatch = pathname.match(/^\/v1\/pdf\/groups\/([^/]+)\/exports$/);
 
     try {
       if (method === "GET" && gateMatch) {
         sendJson(response, 200, await checkPdfGate(actor, decodeURIComponent(gateMatch[1]!)));
+      } else if (method === "GET" && bundleMatch) {
+        sendJson(response, 200, await getGroupLogbookBundle(actor, decodeURIComponent(bundleMatch[1]!)));
       } else if (method === "POST" && pathname === "/v1/pdf/exports") {
         const body = (await readJson(request)) as { groupId: string; storageRef: string };
         sendJson(response, 200, await recordPdfExport(actor, body.groupId, body.storageRef));
@@ -1185,7 +1189,7 @@ const server = createServer((request, response) => {
   });
 });
 
-server.listen(port, "0.0.0.0", () => {
+server.listen(port, () => {
   console.log(`BE Log Book API listening on port ${port}`);
 });
 

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { prisma } from "../db.js";
 import { toJson } from "../json.js";
 import { ApiDomainError } from "../errors.js";
+import { validateImageBytes } from "../file-validation.js";
 
 export type GroupInfoActor = { id: string; role: string };
 
@@ -221,7 +222,8 @@ export async function updateMemberPhoto(
   }
   if (bytes.byteLength > MAX_PHOTO_BYTES) throw new ApiDomainError("FILE_TOO_LARGE", "Photo must be 2 MB or smaller");
   if (!bytes.byteLength) throw new ApiDomainError("INVALID_FILE", "Choose a photo to upload");
-  const url = await storePhoto(bytes, contentType, target.id);
+  const verifiedType = validateImageBytes(bytes);
+  const url = await storePhoto(bytes, verifiedType, target.id);
   await prisma.$transaction(async (tx) => {
     await tx.groupMember.update({ where: { id: memberId }, data: { photoUrl: url } });
     await tx.auditLog.create({

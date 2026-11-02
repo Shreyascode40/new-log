@@ -300,6 +300,38 @@ export async function saveGeneratedPdf(fileName: string, bytes: Buffer): Promise
   return `${SUPABASE_PDF_PREFIX}${bucket}/${objectPath}`;
 }
 
+/** Removes an uploaded PDF from storage (used to clean up orphaned uploads if export creation fails). */
+export async function deleteGeneratedPdf(fileUrl: string): Promise<void> {
+  try {
+    if (fileUrl.startsWith(SUPABASE_PDF_PREFIX)) {
+      const reference = fileUrl.slice(SUPABASE_PDF_PREFIX.length);
+      const separator = reference.indexOf("/");
+      if (separator <= 0 || separator === reference.length - 1) return;
+      const bucket = reference.slice(0, separator);
+      const objectPath = reference.slice(separator + 1);
+
+      const url = process.env.SUPABASE_URL ?? "";
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+      if (!url || !serviceKey || !bucket) return;
+
+      const { createClient } = await import("@supabase/supabase-js");
+      const supabase = createClient(url, serviceKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      await supabase.storage.from(bucket).remove([objectPath]);
+    } else {
+      const match = /^\/media\/pdf\/([a-zA-Z0-9_-]+\.pdf)$/.exec(fileUrl);
+      if (match) {
+        const fullPath = path.join(uploadRoot(), "pdf", match[1]!);
+        const { unlink } = await import("node:fs/promises");
+        await unlink(fullPath).catch(() => {});
+      }
+    }
+  } catch (error) {
+    console.error("Failed to clean up orphaned PDF upload:", error);
+  }
+}
+
 /** Reads a generated PDF from either local development storage or private Supabase Storage. */
 export async function readGeneratedPdf(fileUrl: string): Promise<Buffer> {
   if (fileUrl.startsWith(SUPABASE_PDF_PREFIX)) {
