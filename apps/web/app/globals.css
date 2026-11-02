@@ -279,6 +279,30 @@
 
 /* ---------------------------------------------------- app loading chrome */
 
+.nav-horizontal-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #111111 #E5E7EB;
+}
+
+.nav-horizontal-scrollbar::-webkit-scrollbar {
+  height: 5px;
+}
+
+.nav-horizontal-scrollbar::-webkit-scrollbar-track {
+  background: #E5E7EB;
+  border-radius: 9999px;
+}
+
+.nav-horizontal-scrollbar::-webkit-scrollbar-thumb {
+  background: #111111;
+  border-radius: 9999px;
+  transition: background-color 150ms ease-in-out;
+}
+
+.nav-horizontal-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #374151;
+}
+
 .gallery-scroll {
   scrollbar-width: thin;
   scrollbar-color: #d4d4d4 transparent;

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Spinner } from "@/components/ui/spinner";
 import type { LogbookPdfData } from "@/components/pdf/logbook-pdf-document";
 
 export type PdfDownloadButtonProps = {
@@ -14,6 +15,12 @@ export type PdfDownloadButtonProps = {
   allowedToGenerate: boolean;
 };
 
+type GenerationStage =
+  | "idle"
+  | "preparing"  // 1/3 — Preparing logbook data...
+  | "generating" // 2/3 — Generating PDF...
+  | "saving";    // 3/3 — Saving PDF...
+
 export function PdfDownloadButton({
   groupId,
   groupNo,
@@ -22,18 +29,33 @@ export function PdfDownloadButton({
   allowedToGenerate,
 }: PdfDownloadButtonProps) {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  // Generation loader state
+  const [generationStage, setGenerationStage] = useState<GenerationStage>("idle");
+  const isGenerating = generationStage !== "idle";
+
+  // Saved PDF download loader state
+  const [isDownloadingSaved, setIsDownloadingSaved] = useState(false);
+
+  // User feedback states
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  /**
+   * Sequential 3-stage PDF generation workflow:
+   * Step 1/3: Retrieve authenticated data & pre-resolved student photos
+   * Step 2/3: Client-side @react-pdf rendering & Blob validation
+   * Step 3/3: Archive to Supabase Storage & browser download
+   */
   async function generateAndDownloadPdf() {
-    if (loading) return;
-    setLoading(true);
+    if (isGenerating || isDownloadingSaved) return;
+
     setErrorMessage(null);
+    setSuccessMessage(null);
 
     try {
-      // 1. Fetch authenticated logbook data from server
-      setStatusMessage("Retrieving logbook data...");
+      // --- STAGE 1/3: PREPARING LOGBOOK DATA ---
+      setGenerationStage("preparing");
       const dataRes = await fetch(`/api/groups/${encodeURIComponent(groupId)}/pdf/data`, {
         cache: "no-store",
       });
@@ -46,8 +68,8 @@ export function PdfDownloadButton({
       }
       const logbookData = json.data as LogbookPdfData;
 
-      // 2. Generate A4 PDF in browser using @react-pdf/renderer
-      setStatusMessage("Rendering A4 PDF in browser...");
+      // --- STAGE 2/3: GENERATING PDF ---
+      setGenerationStage("generating");
       const { pdf } = await import("@react-pdf/renderer");
       const { LogbookPdfDocument } = await import("@/components/pdf/logbook-pdf-document");
 
@@ -58,7 +80,7 @@ export function PdfDownloadButton({
         throw new Error("PDF generation yielded empty data.");
       }
 
-      // Verify PDF signature (%PDF-)
+      // Validate PDF signature (%PDF-)
       const slice = await blob.slice(0, 5).arrayBuffer();
       const header = new TextDecoder().decode(new Uint8Array(slice));
       if (header !== "%PDF-") {
@@ -68,8 +90,8 @@ export function PdfDownloadButton({
       const slug = (groupNo || groupId).replace(/[^a-zA-Z0-9_-]/g, "");
       const fileName = `${slug || "group"}-logbook.pdf`;
 
-      // 3. Upload to Supabase Storage via authenticated server route
-      setStatusMessage("Archiving PDF to Supabase Storage...");
+      // --- STAGE 3/3: SAVING PDF ---
+      setGenerationStage("saving");
       const formData = new FormData();
       formData.append("file", blob, fileName);
 
@@ -85,8 +107,7 @@ export function PdfDownloadButton({
         );
       }
 
-      // 4. Download file in browser
-      setStatusMessage("Starting download...");
+      // Complete browser download
       const blobUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = blobUrl;
@@ -96,16 +117,55 @@ export function PdfDownloadButton({
       document.body.removeChild(link);
       setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
 
-      setStatusMessage("Complete!");
+      // Restore button and show subtle success message
+      setSuccessMessage("PDF generated and downloaded successfully.");
       router.refresh();
     } catch (error) {
-      console.error("PDF generation error:", error);
+      console.error("[PdfDownloadButton] Error:", error);
       setErrorMessage(
         error instanceof Error ? error.message : "PDF generation failed. Please try again.",
       );
     } finally {
-      setLoading(false);
-      setTimeout(() => setStatusMessage(null), 3000);
+      setGenerationStage("idle");
+      // Auto-clear success message after 4.5 seconds
+      setTimeout(() => setSuccessMessage(null), 4500);
+    }
+  }
+
+  /**
+   * Saved PDF download handler with independent spinner and loading state
+   */
+  async function handleDownloadSavedPdf() {
+    if (!latestExportId || isDownloadingSaved || isGenerating) return;
+
+    setIsDownloadingSaved(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      const res = await fetch(`/api/pdf/${encodeURIComponent(latestExportId)}`);
+      if (!res.ok) {
+        throw new Error(`Failed to download saved PDF (HTTP ${res.status}).`);
+      }
+
+      const blob = await res.blob();
+      const slug = (groupNo || groupId).replace(/[^a-zA-Z0-9_-]/g, "");
+      const fileName = `${slug || "group"}-logbook.pdf`;
+
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+    } catch (error) {
+      console.error("[PdfDownloadButton] Saved download failed:", error);
+      // Fallback navigation
+      window.location.href = `/api/pdf/${encodeURIComponent(latestExportId)}`;
+    } finally {
+      setIsDownloadingSaved(false);
     }
   }
 
@@ -118,36 +178,63 @@ export function PdfDownloadButton({
         </Alert>
       ) : null}
 
+      {successMessage ? (
+        <div className="inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 animate-in fade-in duration-200">
+          <span className="text-emerald-600">✓</span>
+          <span>{successMessage}</span>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-3">
+        {/* Main "Download PDF (Saved)" button */}
         {hasExistingExport && latestExportId ? (
-          <Button asChild size="sm">
-            <a href={`/api/pdf/${latestExportId}`} download>
-              Download PDF (Saved)
-            </a>
+          <Button
+            size="sm"
+            disabled={isDownloadingSaved || isGenerating}
+            onClick={() => void handleDownloadSavedPdf()}
+            className="bg-[#111827] text-white hover:bg-[#1f2937] transition-colors min-w-[170px]"
+          >
+            {isDownloadingSaved ? (
+              <span className="inline-flex items-center gap-2">
+                <Spinner variant="white" size={16} />
+                <span>1/1 — Downloading PDF...</span>
+              </span>
+            ) : (
+              "Download PDF (Saved)"
+            )}
           </Button>
         ) : null}
 
+        {/* Generate / Regenerate PDF button with 3 numerical stages */}
         {allowedToGenerate ? (
           <Button
             size="sm"
             variant={hasExistingExport ? "outline" : "default"}
-            disabled={loading}
+            disabled={isGenerating || isDownloadingSaved}
             onClick={() => void generateAndDownloadPdf()}
+            className={
+              isGenerating || !hasExistingExport
+                ? "bg-[#111827] text-white hover:bg-[#1f2937] transition-colors min-w-[210px]"
+                : "border-[#DCE4EF] text-[#111111] hover:bg-neutral-100 transition-colors"
+            }
           >
-            {loading
-              ? statusMessage || "Generating PDF..."
-              : hasExistingExport
-                ? "Regenerate & download PDF"
-                : "Generate & download PDF"}
+            {isGenerating ? (
+              <span className="inline-flex items-center gap-2">
+                <Spinner variant="white" size={16} />
+                <span>
+                  {generationStage === "preparing" && "1/3 — Preparing logbook data..."}
+                  {generationStage === "generating" && "2/3 — Generating PDF..."}
+                  {generationStage === "saving" && "3/3 — Saving PDF..."}
+                </span>
+              </span>
+            ) : hasExistingExport ? (
+              "Regenerate & download PDF"
+            ) : (
+              "Generate & download PDF"
+            )}
           </Button>
         ) : null}
       </div>
-
-      {loading && statusMessage ? (
-        <p className="text-xs text-muted-foreground animate-pulse">
-          {statusMessage}
-        </p>
-      ) : null}
     </div>
   );
 }

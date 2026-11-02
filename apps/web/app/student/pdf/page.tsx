@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PdfDownloadButton } from "@/components/student/pdf-download-button";
+import { ArchivedPdfDownloadButton } from "@/components/student/archived-pdf-download-button";
 
 export const metadata = { title: "Final PDF — Digital BE Log Book" };
 
@@ -99,11 +100,10 @@ export default async function StudentPdfPage() {
                     minute: "2-digit",
                   })}
                 </span>
-                <Button asChild size="sm" variant="outline">
-                  <a href={`/api/pdf/${file.id}`} download>
-                    Download
-                  </a>
-                </Button>
+                <ArchivedPdfDownloadButton
+                  exportId={file.id}
+                  fileName={`${(group.groupNo || group.id).replace(/[^a-zA-Z0-9_-]/g, "")}-logbook.pdf`}
+                />
               </div>
             ))}
           </CardContent>
