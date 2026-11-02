@@ -277,20 +277,36 @@ function PhotoBox({
   onUpload: (id: string, file: File) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setLoadError(false);
+  }, [row.photoUrl]);
 
   if (row.placeholder) {
     return <span style={{ color: "#888" }}>—</span>;
   }
 
-  if (row.photoUrl) {
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    setLoadError(false);
+    onUpload(row.id, file);
+    setBusy(false);
+  }
+
+  if (row.photoUrl && !loadError) {
     return (
       <div>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={row.photoUrl}
           alt={`Member ${index} photo`}
-          style={{ maxWidth: "100%", maxHeight: "150px" }}
+          style={{ maxWidth: "100%", maxHeight: "150px", display: "block", margin: "0 auto", objectFit: "contain" }}
+          onError={() => setLoadError(true)}
         />
         {canEdit ? (
           <button
@@ -314,22 +330,16 @@ function PhotoBox({
     );
   }
 
-  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    setBusy(true);
-    onUpload(row.id, file);
-    setBusy(false);
-  }
-
   return (
     <div
       className="paper-photo-box"
-      style={{ cursor: canEdit ? "pointer" : "default" }}
+      style={{
+        cursor: canEdit ? "pointer" : "default",
+        ...(loadError ? { borderColor: "#b91c1c", color: "#b91c1c", fontSize: "11px", padding: "8px" } : {}),
+      }}
       onClick={() => canEdit && inputRef.current?.click()}
     >
-      {busy ? "Uploading…" : "Affix your photo here"}
+      {busy ? "Uploading…" : loadError ? "Photo failed to load. Click to upload." : "Affix your photo here"}
       {canEdit ? (
         <input ref={inputRef} type="file" accept="image/png,image/jpeg" hidden onChange={handleFile} />
       ) : null}

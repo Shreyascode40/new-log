@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AppError } from "./errors";
@@ -26,12 +27,147 @@ export type StoredFile = { url: string; bytes: number };
 const SUPABASE_PDF_PREFIX = "supabase-pdf://";
 
 export function uploadProvider(): string {
-  return process.env.UPLOAD_PROVIDER || "local";
+  const configured = (process.env.UPLOAD_PROVIDER ?? "").trim().toLowerCase();
+  const hasSupabaseCredentials = Boolean(
+    process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY,
+  );
+
+  // Vercel (and any production deployment) has an ephemeral filesystem. If the
+  // provider was left at the development default, use the configured Supabase
+  // bucket instead of writing photos/PDFs that disappear on the next request.
+  if (
+    configured !== "supabase" &&
+    hasSupabaseCredentials &&
+    (process.env.VERCEL === "1" || process.env.NODE_ENV === "production")
+  ) {
+    return "supabase";
+  }
+  return configured || "local";
 }
 
 /** Absolute path of the local upload root (local provider only). */
 export function uploadRoot(): string {
+  const candidates = [
+    path.join(process.cwd(), "var", "uploads"),
+    path.join(process.cwd(), "..", "..", "var", "uploads"),
+    path.join(process.cwd(), "..", "var", "uploads"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
   return path.join(process.cwd(), "var", "uploads");
+}
+
+export type StoredUpload = { bytes: Buffer; contentType: string };
+
+const CONTENT_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".pdf": "application/pdf",
+};
+
+function contentTypeFor(filePath: string): string {
+  return CONTENT_TYPES[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
+}
+
+/** Rejects absolute paths and any `..` segment before touching disk or storage. */
+function normalizeObjectPath(objectPath: string): string | null {
+  const normalized = objectPath.replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!normalized || normalized.endsWith("/")) return null;
+  const parts = normalized.split("/");
+  if (parts.some((part) => part === "" || part === "." || part === "..")) return null;
+  return normalized;
+}
+
+/**
+ * Buckets to search for an existing object. Old deployments stored team photos
+ * and final PDFs under the public `logbook-uploads` bucket, while newer uploads
+ * use the private bucket. Try both so existing rows keep working after a
+ * provider/bucket change.
+ */
+function storageBuckets(preferred: Array<string | undefined> = []): string[] {
+  return Array.from(
+    new Set(
+      [
+        ...preferred,
+        process.env.SUPABASE_PRIVATE_BUCKET,
+        process.env.SUPABASE_BUCKET,
+        process.env.SUPABASE_PDF_BUCKET,
+        "logbook-uploads",
+        "logbook-private-uploads",
+      ]
+        .map((bucket) => (bucket ?? "").trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+async function downloadFromSupabase(
+  objectPath: string,
+  preferredBuckets: Array<string | undefined> = [],
+): Promise<StoredUpload | null> {
+  const url = process.env.SUPABASE_URL ?? "";
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  if (!url || !serviceKey) return null;
+
+  const { createClient } = await import("@supabase/supabase-js");
+  const supabase = createClient(url, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
+  for (const bucket of storageBuckets(preferredBuckets)) {
+    const { data, error } = await supabase.storage.from(bucket).download(objectPath);
+    if (!error && data) {
+      return {
+        bytes: Buffer.from(await data.arrayBuffer()),
+        contentType: contentTypeFor(objectPath),
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Reads a stored upload by its relative path (`group-members/file.jpg`,
+ * `pdf/file.pdf`, ...). Local disk wins in development; on Vercel the local
+ * file does not exist, so the same path is fetched from Supabase Storage.
+ * Used by the `/media/[...path]` route and the private download endpoints.
+ */
+export async function readStoredUpload(
+  objectPath: string,
+  preferredBuckets: Array<string | undefined> = [],
+): Promise<StoredUpload | null> {
+  const normalized = normalizeObjectPath(objectPath);
+  if (!normalized) return null;
+
+  const root = uploadRoot();
+  const localCandidates = [
+    path.resolve(root, normalized),
+    ...(normalized.startsWith("pdf/") ? [] : [path.resolve(root, "pdf", normalized)]),
+  ];
+
+  for (const full of localCandidates) {
+    if (full.startsWith(root + path.sep)) {
+      try {
+        return { bytes: await readFile(full), contentType: contentTypeFor(full) };
+      } catch {
+        // Not on disk - check next candidate or fall through to Supabase Storage.
+      }
+    }
+  }
+
+  const res = await downloadFromSupabase(normalized, preferredBuckets);
+  if (res) return res;
+
+  if (normalized.endsWith(".pdf") && !normalized.startsWith("pdf/")) {
+    return downloadFromSupabase(`pdf/${normalized}`, preferredBuckets);
+  }
+
+  return null;
 }
 
 function fileNameFor(baseName: string, ext: string): string {
@@ -73,7 +209,11 @@ async function uploadToSupabase(
 ): Promise<string> {
   const url = process.env.SUPABASE_URL ?? "";
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-  const bucket = process.env.SUPABASE_PRIVATE_BUCKET ?? "";
+  const bucket = (
+    process.env.SUPABASE_PRIVATE_BUCKET ||
+    process.env.SUPABASE_BUCKET ||
+    ""
+  ).trim();
   if (!url || !serviceKey || !bucket) {
     throw new AppError(
       "UPLOAD_NOT_CONFIGURED",
@@ -97,29 +237,20 @@ async function uploadToSupabase(
 }
 
 /** Reads an uploaded file from private storage after the route authorizes its DB owner. */
-export async function readPrivateUpload(fileUrl: string): Promise<{ bytes: Buffer; contentType: string }> {
+export async function readPrivateUpload(fileUrl: string): Promise<StoredUpload> {
   const match = /^\/api\/files\/([A-Za-z0-9_-]+)\.(?:jpe?g|png|pdf)$/i.exec(fileUrl);
   if (!match) throw new AppError("FILE_NOT_FOUND", "Stored file reference is invalid.");
   const reference = Buffer.from(match[1]!, "base64url").toString("utf8");
   const separator = reference.indexOf("/");
+  if (separator <= 0 || separator === reference.length - 1) {
+    throw new AppError("FILE_NOT_FOUND", "Stored file reference is invalid.");
+  }
   const bucket = reference.slice(0, separator);
   const objectPath = reference.slice(separator + 1);
-  const configuredBucket = process.env.SUPABASE_PRIVATE_BUCKET ?? "";
-  const url = process.env.SUPABASE_URL ?? "";
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-  if (separator <= 0 || !objectPath || !url || !serviceKey || bucket !== configuredBucket) {
-    throw new AppError("UPLOAD_NOT_CONFIGURED", "Private upload storage is not configured.");
-  }
 
-  const { createClient } = await import("@supabase/supabase-js");
-  const supabase = createClient(url, serviceKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const { data, error } = await supabase.storage.from(bucket).download(objectPath);
-  if (error || !data) throw new AppError("FILE_NOT_FOUND", "Stored file was not found.");
-  const extension = path.extname(objectPath).toLowerCase();
-  const contentType = extension === ".pdf" ? "application/pdf" : extension === ".png" ? "image/png" : "image/jpeg";
-  return { bytes: Buffer.from(await data.arrayBuffer()), contentType };
+  const stored = await readStoredUpload(objectPath, [bucket]);
+  if (!stored) throw new AppError("FILE_NOT_FOUND", "Stored file was not found.");
+  return stored;
 }
 
 /**
@@ -143,7 +274,12 @@ export async function saveGeneratedPdf(fileName: string, bytes: Buffer): Promise
 
   const url = process.env.SUPABASE_URL ?? "";
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-  const bucket = process.env.SUPABASE_PDF_BUCKET ?? "";
+  const bucket = (
+    process.env.SUPABASE_PDF_BUCKET ||
+    process.env.SUPABASE_PRIVATE_BUCKET ||
+    process.env.SUPABASE_BUCKET ||
+    ""
+  ).trim();
   if (!url || !serviceKey || !bucket) {
     throw new AppError(
       "UPLOAD_NOT_CONFIGURED",
@@ -174,23 +310,18 @@ export async function readGeneratedPdf(fileUrl: string): Promise<Buffer> {
     }
     const bucket = reference.slice(0, separator);
     const objectPath = reference.slice(separator + 1);
-    const url = process.env.SUPABASE_URL ?? "";
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-    if (!url || !serviceKey || bucket !== process.env.SUPABASE_PDF_BUCKET) {
-      throw new AppError("UPLOAD_NOT_CONFIGURED", "Private PDF storage is not configured.");
-    }
-    const { createClient } = await import("@supabase/supabase-js");
-    const supabase = createClient(url, serviceKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-    const { data, error } = await supabase.storage.from(bucket).download(objectPath);
-    if (error || !data) throw new AppError("PDF_NOT_FOUND", "Stored PDF was not found.");
-    return Buffer.from(await data.arrayBuffer());
+    const stored = await readStoredUpload(objectPath, [bucket]);
+    if (!stored) throw new AppError("PDF_NOT_FOUND", "Stored PDF was not found.");
+    return stored.bytes;
   }
 
   const match = /^\/media\/pdf\/([a-zA-Z0-9_-]+\.pdf)$/.exec(fileUrl);
   if (!match) throw new AppError("PDF_NOT_FOUND", "Stored PDF reference is invalid.");
-  return readFile(path.join(uploadRoot(), "pdf", match[1]));
+  // Older exports stored only a local `/media/pdf/...` path. On Vercel the
+  // file is not on disk, so look for the same relative path in Supabase.
+  const stored = await readStoredUpload(`pdf/${match[1]}`);
+  if (!stored) throw new AppError("PDF_NOT_FOUND", "Stored PDF was not found.");
+  return stored.bytes;
 }
 
 /**

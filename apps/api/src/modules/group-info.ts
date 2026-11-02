@@ -9,6 +9,29 @@ import { ApiDomainError } from "../errors.js";
 export type GroupInfoActor = { id: string; role: string };
 
 const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Production hosts (Render/Vercel) have an ephemeral filesystem. If the provider
+ * was left at its local default but Supabase credentials exist, persist uploads
+ * remotely instead of losing them on the next deploy/restart.
+ */
+function useSupabaseStorage(): boolean {
+  if (process.env.UPLOAD_PROVIDER === "supabase") return true;
+  return Boolean(
+    process.env.NODE_ENV === "production" &&
+      process.env.SUPABASE_URL &&
+      process.env.SUPABASE_SERVICE_ROLE_KEY,
+  );
+}
+
+function privateBucket(): string {
+  return (
+    process.env.SUPABASE_PRIVATE_BUCKET ||
+    process.env.SUPABASE_BUCKET ||
+    ""
+  ).trim();
+}
+
 const coverSchema = z.object({
   department: z.string().trim().max(80, "Department is too long").optional().or(z.literal("")),
   academicYear: z.string().trim().max(20, "Academic year is too long").optional().or(z.literal("")),
@@ -154,10 +177,10 @@ export async function updateMember(actor: GroupInfoActor, input: unknown) {
 async function storePhoto(bytes: Buffer, contentType: "image/jpeg" | "image/png", memberId: string) {
   const ext = contentType === "image/png" ? "png" : "jpg";
   const fileName = `${memberId.replace(/[^a-zA-Z0-9_-]/g, "")}-${Date.now()}-${randomBytes(4).toString("hex")}.${ext}`;
-  if ((process.env.UPLOAD_PROVIDER ?? "local") === "supabase") {
+  if (useSupabaseStorage()) {
     const url = process.env.SUPABASE_URL ?? "";
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-    const bucket = process.env.SUPABASE_PRIVATE_BUCKET ?? "";
+    const bucket = privateBucket();
     if (!url || !serviceKey || !bucket) {
       throw new ApiDomainError("UPLOAD_NOT_CONFIGURED", "Private uploads are not configured.", 500);
     }

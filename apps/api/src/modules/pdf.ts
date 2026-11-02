@@ -108,24 +108,27 @@ export async function recordPdfExport(
 ): Promise<PdfExportResult> {
   await checkPdfGate(actor, groupId);
 
-  const result = await prisma.$transaction(async (tx) => {
-    const saved = await tx.pdfExport.create({
-      data: { groupId, generatedById: actor.id, fileUrl: storageRef },
-    });
-    const downloadUrl = `/api/pdf/${saved.id}`;
-    await tx.group.update({ where: { id: groupId }, data: { status: "PDF_GENERATED" } });
-    await logAction(
-      {
-        userId: actor.id,
-        action: "PDF_GENERATE",
-        entity: "PdfExport",
-        entityId: saved.id,
-        after: { url: downloadUrl },
-      },
-      tx,
-    );
-    return { exportId: saved.id, downloadUrl, fileUrl: storageRef };
-  });
+  const result = await prisma.$transaction(
+    async (tx) => {
+      const saved = await tx.pdfExport.create({
+        data: { groupId, generatedById: actor.id, fileUrl: storageRef },
+      });
+      const downloadUrl = `/api/pdf/${saved.id}`;
+      await tx.group.update({ where: { id: groupId }, data: { status: "PDF_GENERATED" } });
+      await logAction(
+        {
+          userId: actor.id,
+          action: "PDF_GENERATE",
+          entity: "PdfExport",
+          entityId: saved.id,
+          after: { url: downloadUrl },
+        },
+        tx,
+      );
+      return { exportId: saved.id, downloadUrl, fileUrl: storageRef };
+    },
+    { maxWait: 20000, timeout: 45000 },
+  );
 
   return result;
 }
@@ -183,25 +186,52 @@ export async function listGroupPdfExports(actor: PdfActor, groupId: string) {
   });
 }
 
+function possibleUrls(fileUrl: string): string[] {
+  const set = new Set<string>([fileUrl]);
+  const match = /^\/api\/files\/([A-Za-z0-9_-]+)(?:\.(?:jpe?g|png|pdf))?$/i.exec(fileUrl);
+  if (match) {
+    try {
+      const decoded = Buffer.from(match[1], "base64url").toString("utf8");
+      const slash = decoded.indexOf("/");
+      if (slash > 0) {
+        const objectPath = decoded.slice(slash + 1);
+        set.add(`/media/${objectPath}`);
+        set.add(objectPath);
+      }
+    } catch {}
+  } else if (fileUrl.startsWith("/media/")) {
+    const objectPath = fileUrl.slice("/media/".length);
+    set.add(objectPath);
+  }
+  return Array.from(set);
+}
+
 export async function authorizeFileAccess(actor: PdfActor, fileUrl: string) {
   const groupAccess = {
     select: { guideId: true, members: { select: { userId: true } } },
   } as const;
 
-  const [member, competition, paper, content, sponsor] = await Promise.all([
-    prisma.groupMember.findFirst({ where: { photoUrl: fileUrl }, select: { group: groupAccess } }),
-    prisma.competition.findFirst({ where: { certificateUrl: fileUrl }, select: { group: groupAccess } }),
-    prisma.paperPublication.findFirst({ where: { fileUrl }, select: { group: groupAccess } }),
-    prisma.contentPage.findFirst({ where: { fileUrl }, select: { group: groupAccess } }),
-    prisma.sponsorFeedback.findFirst({ where: { sealUrl: fileUrl }, select: { group: groupAccess } }),
+  const urls = possibleUrls(fileUrl);
+  const [members, competitions, papers, contents, sponsors] = await Promise.all([
+    prisma.groupMember.findMany({ where: { photoUrl: { in: urls } }, select: { userId: true, group: groupAccess } }),
+    prisma.competition.findMany({ where: { certificateUrl: { in: urls } }, select: { group: groupAccess } }),
+    prisma.paperPublication.findMany({ where: { fileUrl: { in: urls } }, select: { group: groupAccess } }),
+    prisma.contentPage.findMany({ where: { fileUrl: { in: urls } }, select: { group: groupAccess } }),
+    prisma.sponsorFeedback.findMany({ where: { sealUrl: { in: urls } }, select: { group: groupAccess } }),
   ]);
-  const owner = member ?? competition ?? paper ?? content ?? sponsor;
-  if (!owner) throw new ApiDomainError("NOT_FOUND", "File not found", 404);
+  const owners = [...members, ...competitions, ...papers, ...contents, ...sponsors];
+  if (owners.length === 0) throw new ApiDomainError("NOT_FOUND", "File not found", 404);
 
   const canView =
     actor.role === "HOD" ||
-    owner.group.members.some((m) => m.userId === actor.id) ||
-    owner.group.guideId === actor.id;
+    actor.role === "SYSTEM" ||
+    actor.id === "system" ||
+    members.some((m) => m.userId === actor.id) ||
+    owners.some(
+      (owner) =>
+        owner.group &&
+        (owner.group.members.some((m) => m.userId === actor.id) || owner.group.guideId === actor.id),
+    );
   if (!canView) {
     throw new ApiDomainError("FORBIDDEN", "You cannot access this group's file", 403);
   }

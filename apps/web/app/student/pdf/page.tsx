@@ -67,15 +67,22 @@ export default async function StudentPdfPage() {
           ) : null}
           <div className="flex flex-wrap gap-2">
             <Button asChild variant="outline" size="sm">
-              <Link href={`/print/${membership.groupId}`} target="_blank" rel="noreferrer">
+              <a href={`/print/${membership.groupId}`} target="_blank" rel="noreferrer">
                 Preview print version
-              </Link>
+              </a>
             </Button>
-            {open ? (
+            {exports.length > 0 ? (
               <Button asChild size="sm">
-                <Link href={`/api/groups/${membership.groupId}/pdf`}>
-                  Generate &amp; download PDF
-                </Link>
+                <a href={`/api/pdf/${exports[0].id}`} download>
+                  Download PDF
+                </a>
+              </Button>
+            ) : null}
+            {open ? (
+              <Button asChild variant={exports.length > 0 ? "outline" : "default"} size="sm">
+                <a href={`/api/groups/${membership.groupId}/pdf`} download>
+                  {exports.length > 0 ? "Regenerate & download PDF" : "Generate & download PDF"}
+                </a>
               </Button>
             ) : null}
           </div>
@@ -100,9 +107,9 @@ export default async function StudentPdfPage() {
                   })}
                 </span>
                 <Button asChild size="sm" variant="outline">
-                  <Link href={`/api/pdf/${file.id}`}>
+                  <a href={`/api/pdf/${file.id}`} download>
                     Download
-                  </Link>
+                  </a>
                 </Button>
               </div>
             ))}

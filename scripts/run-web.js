@@ -41,13 +41,8 @@ async function main() {
     const apiListening = await isPortListening(4000);
     if (!apiListening) {
       console.log("Backend API not detected on port 4000. Starting backend API...");
-      const tsxBin = path.join(
-        repoRoot,
-        "node_modules",
-        ".bin",
-        process.platform === "win32" ? "tsx.cmd" : "tsx",
-      );
-      apiProcess = spawn(tsxBin, ["watch", "apps/api/src/server.ts"], {
+      const tsxCli = path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
+      apiProcess = spawn(process.execPath, [tsxCli, "watch", "apps/api/src/server.ts"], {
         cwd: repoRoot,
         env: process.env,
         stdio: "inherit",

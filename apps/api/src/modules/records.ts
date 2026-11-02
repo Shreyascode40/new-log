@@ -18,6 +18,24 @@ export type RecordsActor = { id: string; role: string; name?: string };
 const MAX_DOC_BYTES = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_DOC_TYPES = ["application/pdf", "image/jpeg", "image/png"] as const;
 
+/** See group-info.ts: prefer Supabase in production even if the provider env is unset. */
+function useSupabaseStorage(): boolean {
+  if (process.env.UPLOAD_PROVIDER === "supabase") return true;
+  return Boolean(
+    process.env.NODE_ENV === "production" &&
+      process.env.SUPABASE_URL &&
+      process.env.SUPABASE_SERVICE_ROLE_KEY,
+  );
+}
+
+function privateBucket(): string {
+  return (
+    process.env.SUPABASE_PRIVATE_BUCKET ||
+    process.env.SUPABASE_BUCKET ||
+    ""
+  ).trim();
+}
+
 const idSchema = z.string().min(1);
 const shortText = (max: number, label: string) =>
   z.string().trim().max(max, `${label} is too long`).default("");
@@ -97,10 +115,10 @@ async function persistDocument(
   const safeBase = baseName.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 60) || "file";
   const fileName = `${safeBase}-${Date.now()}-${randomBytes(4).toString("hex")}.${ext}`;
 
-  if (process.env.UPLOAD_PROVIDER === "supabase") {
+  if (useSupabaseStorage()) {
     const url = process.env.SUPABASE_URL ?? "";
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-    const bucket = process.env.SUPABASE_PRIVATE_BUCKET ?? "";
+    const bucket = privateBucket();
     if (!url || !serviceKey || !bucket) {
       throw new ApiDomainError("UPLOAD_NOT_CONFIGURED", "Private uploads are not configured.", 500);
     }

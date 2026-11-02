@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { backendApi } from "@/lib/backend-api";
-import { uploadRoot } from "@/lib/upload";
+import { readStoredUpload } from "@/lib/upload";
 
 /**
  * Serves locally stored uploads (`var/uploads`) with the right content type.
@@ -18,14 +16,6 @@ import { uploadRoot } from "@/lib/upload";
  */
 
 export const dynamic = "force-dynamic";
-
-const CONTENT_TYPES: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".svg": "image/svg+xml",
-  ".pdf": "application/pdf",
-};
 
 async function authorizePdf(pathParts: string[]): Promise<NextResponse | null> {
   if (pathParts[0]?.toLowerCase() !== "pdf") return null;
@@ -57,26 +47,18 @@ export async function GET(_request: Request, { params }: { params: { path: strin
   const denied = await authorizePdf(pathParts);
   if (denied) return denied;
 
-  const root = uploadRoot();
   const relative = pathParts.join("/");
-  const full = path.normalize(path.join(root, relative));
-
-  // Never escape the upload root.
-  if (!full.startsWith(root + path.sep)) {
+  const stored = await readStoredUpload(relative);
+  if (!stored) {
     return new NextResponse("Not found", { status: 404 });
   }
 
-  try {
-    const data = await readFile(full);
-    const type = CONTENT_TYPES[path.extname(full).toLowerCase()] ?? "application/octet-stream";
-    const isPdf = pathParts[0]?.toLowerCase() === "pdf";
-    return new NextResponse(new Uint8Array(data), {
-      headers: {
-        "Content-Type": type,
-        "Cache-Control": isPdf ? "private, no-store" : "public, max-age=3600",
-      },
-    });
-  } catch {
-    return new NextResponse("Not found", { status: 404 });
-  }
+  const isPdf = pathParts[0]?.toLowerCase() === "pdf";
+  return new NextResponse(new Uint8Array(stored.bytes), {
+    headers: {
+      "Content-Type": stored.contentType,
+      "Cache-Control": isPdf ? "private, no-store" : "public, max-age=3600",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 }
