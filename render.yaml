@@ -27,3 +27,33 @@ services:
         sync: false
       - key: API_ALLOWED_ORIGINS
         sync: false
+      - key: WEB_URL
+        sync: false
+      - key: EMAIL_PROVIDER
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: BREVO_SMTP_HOST
+        sync: false
+      - key: BREVO_SMTP_PORT
+        sync: false
+      - key: BREVO_SMTP_USER
+        sync: false
+      - key: BREVO_SMTP_PASSWORD
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: REQUIRE_EMAIL_VERIFICATION
+        sync: false
+      - key: ALLOWED_EMAIL_DOMAIN
+        sync: false

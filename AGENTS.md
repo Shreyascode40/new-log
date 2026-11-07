@@ -32,7 +32,7 @@ SQLite (Prisma) does not support `enum` or `Json` column types, so:
    `AuditLog.before` / `.after` hold JSON strings. Always read/write them through
    `lib/json.ts` (`toJson` / `fromJson`) so a move to PostgreSQL `Json` columns is a
    one-place change.
-3. Extra columns added beyond B16 that the features need: `Group.code`, `Group.creatorId`,
+3. Extra columns added beyond B16 that the features need: `User.emailVerified`, `Group.code`, `Group.creatorId`,
    `Group.rejectReason`, `MarksSheet.memberId` + `groupMemberId` link,
    `ExaminerFeedback.projectTitle` / `.date` / `.internalName`, `ReviewForm.submittedById`,
    `GroupMember.memberType`, `ActivityEntry.statusText`. All are additive; nothing the

@@ -28,6 +28,7 @@ model User {
   // STUDENT | GUIDE | HOD
   role            String
   passwordHash    String
+  emailVerified   DateTime?
   emailVerifiedAt DateTime?
   // 1 = active, 0 = deactivated (SQLite has no Boolean defaults on some versions)
   active          Boolean   @default(true)
@@ -58,7 +59,7 @@ model User {
 model EmailVerificationToken {
   id        String    @id @default(cuid())
   userId    String
-  tokenHash String
+  tokenHash String    @unique
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
@@ -70,7 +71,7 @@ model EmailVerificationToken {
 model PasswordResetToken {
   id        String    @id @default(cuid())
   userId    String
-  tokenHash String
+  tokenHash String    @unique
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())

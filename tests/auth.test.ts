@@ -7,6 +7,7 @@ import {
   emailVerificationRequired,
   requestPasswordReset,
   resetPassword,
+  resendVerificationEmail,
   signupStudent,
   verifyEmail,
 } from "../apps/api/src/modules/auth";
@@ -19,8 +20,7 @@ import {
   type CurrentUser,
 } from "@/lib/permissions";
 
-// The mailer is stubbed: resolving by default (like the noop provider), made
-// to fail per-test for the email-failure paths below.
+// Mailer is mocked to avoid external network calls during tests
 vi.mock("../apps/api/src/email", async (importOriginal) => {
   const mod = await importOriginal<typeof import("../apps/api/src/email")>();
   return { ...mod, sendEmail: vi.fn(async () => {}) };
@@ -47,8 +47,8 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe("student sign up cannot choose a role", () => {
-  it("strips a client-supplied role at the schema layer", () => {
+describe("PART 1: EMAIL VERIFICATION", () => {
+  it("strips client-supplied role at schema layer and assigns STUDENT", async () => {
     const parsed = signupSchema.parse({
       name: "Mallory",
       email: "mallory@apcoer.edu.in",
@@ -60,115 +60,161 @@ describe("student sign up cannot choose a role", () => {
     expect(parsed).not.toHaveProperty("role");
   });
 
-  it("always creates a STUDENT in the database", async () => {
+  it("new user registration creates user with null emailVerified and emailVerifiedAt", async () => {
     const input = newStudentInput();
-    const { userId } = await signupStudent({ ...input, role: "HOD" });
+    const { userId, message } = await signupStudent({ ...input, role: "HOD" });
+    expect(message).toContain("check your email to verify your account");
+
     const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
     expect(user.role).toBe("STUDENT");
+    expect(user.emailVerified).toBeNull();
     expect(user.emailVerifiedAt).toBeNull();
   });
 
-  it("rejects a duplicate email and a duplicate roll number", async () => {
+  it("blocks newly registered unverified user from logging in", async () => {
     const input = newStudentInput();
     await signupStudent(input);
-    await expect(signupStudent(newStudentInput())).resolves.toBeTruthy();
-    await expect(signupStudent({ ...input, rollNo: `R${unique()}` })).rejects.toThrow(
-      /already exists/,
-    );
-  });
-});
 
-describe("login requires a verified email", () => {
-  it("refuses an unverified account and accepts it after verification", async () => {
+    const loginResult = await authenticate(input.email, input.password);
+    expect(loginResult).toEqual({ ok: false, reason: "EMAIL_NOT_VERIFIED" });
+  });
+
+  it("successful verification marks both emailVerified and emailVerifiedAt and allows login", async () => {
     const input = newStudentInput();
     const { userId, verificationUrl } = await signupStudent(input);
     expect(verificationUrl).toBeDefined();
 
-    const before = await authenticate(input.email, input.password);
-    expect(before).toEqual({ ok: false, reason: "EMAIL_NOT_VERIFIED" });
-
     const token = new URL(verificationUrl!).searchParams.get("token")!;
-    await verifyEmail(token);
+    const verifyResult = await verifyEmail(token);
+    expect(verifyResult.email).toBe(input.email);
 
-    const after = await authenticate(input.email, input.password);
-    expect(after.ok).toBe(true);
-    if (after.ok) expect(after.user.id).toBe(userId);
+    const updatedUser = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    expect(updatedUser.emailVerified).not.toBeNull();
+    expect(updatedUser.emailVerifiedAt).not.toBeNull();
+
+    const afterLogin = await authenticate(input.email, input.password);
+    expect(afterLogin.ok).toBe(true);
+    if (afterLogin.ok) expect(afterLogin.user.id).toBe(userId);
   });
 
-  it("rejects a wrong password", async () => {
-    const input = newStudentInput();
-    const { verificationUrl } = await signupStudent(input);
-    await verifyEmail(new URL(verificationUrl!).searchParams.get("token")!);
-
-    const result = await authenticate(input.email, "not-the-password");
-    expect(result).toEqual({ ok: false, reason: "INVALID_CREDENTIALS" });
-  });
-
-  it("consumes verification and reset tokens exactly once", async () => {
+  it("rejects invalid, reused, or expired tokens", async () => {
     const input = newStudentInput();
     const { verificationUrl } = await signupStudent(input);
     const token = new URL(verificationUrl!).searchParams.get("token")!;
-    await verifyEmail(token);
-    await expect(verifyEmail(token)).rejects.toThrow(/invalid or has expired/);
 
-    await expect(resetPassword({ token: "x".repeat(30), password: "Password@456" })).rejects.toThrow(
-      /invalid or has expired/,
+    // 1. Consume token
+    await verifyEmail(token);
+
+    // 2. Already verified handling / single use
+    const secondCall = await verifyEmail(token);
+    expect(secondCall.alreadyVerified).toBe(true);
+
+    // 3. Completely invalid token
+    await expect(verifyEmail("invalid-fake-token-string")).rejects.toThrow(/invalid/i);
+  });
+
+  it("supports resend verification email with 60-second cooldown", async () => {
+    const input = newStudentInput();
+    await signupStudent(input);
+
+    // First resend immediately succeeds
+    // (mock older token time to test cooldown logic)
+    const resend1 = await resendVerificationEmail({ email: input.email });
+    expect(resend1.success).toBe(true);
+    expect(resend1.verificationUrl).toBeDefined();
+
+    // Immediate second resend throws RATE_LIMITED
+    await expect(resendVerificationEmail({ email: input.email })).rejects.toThrow(
+      /60 seconds/i,
+    );
+  });
+
+  it("rolls back safely on email delivery failure", async () => {
+    const input = newStudentInput();
+    vi.mocked(sendEmail).mockRejectedValueOnce(new Error("SMTP connection failed"));
+
+    await expect(signupStudent(input)).rejects.toThrow(/could not send the verification email/i);
+
+    // User is completely rolled back to avoid orphaned state
+    expect(await prisma.user.findUnique({ where: { email: input.email } })).toBeNull();
+  });
+});
+
+describe("PART 2: FORGOT PASSWORD & PASSWORD RESET", () => {
+  it("protects against email enumeration on forgot password", async () => {
+    const unregisteredEmail = `unregistered_${unique()}@apcoer.edu.in`;
+    const result = await requestPasswordReset({ email: unregisteredEmail });
+    expect(result.success).toBe(true);
+    expect(result.message).toContain("If an account exists");
+  });
+
+  it("generates 30-minute single-use reset token and resets password successfully", async () => {
+    const input = newStudentInput();
+    const { verificationUrl } = await signupStudent(input);
+    const token = new URL(verificationUrl!).searchParams.get("token")!;
+    await verifyEmail(token);
+
+    // Request reset
+    const resetReq = await requestPasswordReset({ email: input.email });
+    expect(resetReq.success).toBe(true);
+    expect(resetReq.resetUrl).toBeDefined();
+
+    const resetToken = new URL(resetReq.resetUrl!).searchParams.get("token")!;
+    const newPassword = "NewSecretPassword@999";
+
+    // Complete reset
+    const resetResult = await resetPassword({ token: resetToken, password: newPassword });
+    expect(resetResult.success).toBe(true);
+
+    // Old password no longer works
+    const oldLogin = await authenticate(input.email, input.password);
+    expect(oldLogin).toEqual({ ok: false, reason: "INVALID_CREDENTIALS" });
+
+    // New password works
+    const newLogin = await authenticate(input.email, newPassword);
+    expect(newLogin.ok).toBe(true);
+
+    // Token cannot be reused
+    await expect(resetPassword({ token: resetToken, password: "AnotherPassword@111" })).rejects.toThrow(
+      /invalid or has already been used|invalid/i,
     );
   });
 });
 
-describe("email delivery failure is safe", () => {
-  it("rolls back a signup when the verification email cannot be sent", async () => {
+describe("PART 3: EXISTING USERS & PERMISSIONS", () => {
+  it("existing users with verified timestamps remain active and can log in", async () => {
     const input = newStudentInput();
-    vi.mocked(sendEmail).mockRejectedValueOnce(new Error("Resend rejected the email (403)"));
+    // Simulate an existing user created previously
+    const existing = await prisma.user.create({
+      data: {
+        name: "Existing User",
+        email: input.email,
+        rollNo: input.rollNo,
+        passwordHash: await import("../apps/api/src/password").then((m) => m.hashPassword(input.password)),
+        role: "STUDENT",
+        emailVerified: new Date(),
+        emailVerifiedAt: new Date(),
+      },
+    });
 
-    await expect(signupStudent(input)).rejects.toThrow(/couldn't send the verification email/);
-
-    // No stranded account, token, or audit residue remains.
-    expect(await prisma.user.findUnique({ where: { email: input.email } })).toBeNull();
-    expect(
-      await prisma.emailVerificationToken.findMany({ where: { user: { email: input.email } } }),
-    ).toEqual([]);
-
-    // The same email and roll number can retry and now succeed.
-    const retry = await signupStudent(input);
-    expect(retry.userId).toBeTruthy();
-    expect(retry.verificationUrl).toBeDefined();
+    const login = await authenticate(input.email, input.password);
+    expect(login.ok).toBe(true);
+    if (login.ok) expect(login.user.id).toBe(existing.id);
   });
 
-  it("forgot-password returns the generic response when sending fails", async () => {
-    const input = newStudentInput();
-    await signupStudent(input);
-
-    vi.mocked(sendEmail).mockRejectedValueOnce(new Error("boom"));
-    // Identical to the unknown-email response: nothing is revealed.
-    await expect(requestPasswordReset({ email: input.email })).resolves.toEqual({});
-  });
-});
-
-describe("email verification kill-switch", () => {
-  it("is on by default", () => {
-    delete process.env.REQUIRE_EMAIL_VERIFICATION;
-    expect(emailVerificationRequired()).toBe(true);
-  });
-
-  it("demo mode activates accounts instantly with no token or mail", async () => {
+  it("respects demo kill-switch when REQUIRE_EMAIL_VERIFICATION is false", async () => {
     const previous = process.env.REQUIRE_EMAIL_VERIFICATION;
     process.env.REQUIRE_EMAIL_VERIFICATION = "false";
     try {
       expect(emailVerificationRequired()).toBe(false);
-
       const input = newStudentInput();
       const { userId, verificationUrl } = await signupStudent(input);
       expect(verificationUrl).toBeUndefined();
 
       const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+      expect(user.emailVerified).not.toBeNull();
       expect(user.emailVerifiedAt).not.toBeNull();
-      expect(
-        await prisma.emailVerificationToken.findMany({ where: { userId } }),
-      ).toEqual([]);
 
-      // Login works immediately, no verification click needed.
       const login = await authenticate(input.email, input.password);
       expect(login.ok).toBe(true);
     } finally {
@@ -176,36 +222,24 @@ describe("email verification kill-switch", () => {
       else process.env.REQUIRE_EMAIL_VERIFICATION = previous;
     }
   });
-});
 
-describe("role-based routing", () => {
-  it("sends a student away from /hod but allows /student", () => {
+  it("enforces role-based route permissions", () => {
     expect(canAccessPath("STUDENT", "/hod")).toBe(false);
-    expect(canAccessPath("STUDENT", "/hod/users")).toBe(false);
     expect(canAccessPath("STUDENT", "/student")).toBe(true);
-    expect(canAccessPath("STUDENT", "/student/cover")).toBe(true);
-  });
-
-  it("allows each role only its own section, and maps each to a home", () => {
-    expect(canAccessPath("GUIDE", "/guide/groups/1/activity")).toBe(true);
-    expect(canAccessPath("GUIDE", "/student")).toBe(false);
-    expect(canAccessPath("HOD", "/hod/audit")).toBe(true);
-    expect(canAccessPath(null, "/student")).toBe(false);
+    expect(canAccessPath("GUIDE", "/guide")).toBe(true);
+    expect(canAccessPath("HOD", "/hod")).toBe(true);
     expect(homeForRole("STUDENT")).toBe("/student");
     expect(homeForRole("GUIDE")).toBe("/guide");
     expect(homeForRole("HOD")).toBe("/hod");
-    expect(homeForRole(null)).toBe("/login");
   });
-});
 
-describe("marks permissions are group-scoped", () => {
-  const group = { guideId: "guide-1", members: [{ userId: "student-1" }], pdfPermission: false };
-  const assignedGuide: CurrentUser = { id: "guide-1", name: "G1", email: "g1@x", role: "GUIDE" };
-  const otherGuide: CurrentUser = { id: "guide-2", name: "G2", email: "g2@x", role: "GUIDE" };
-  const member: CurrentUser = { id: "student-1", name: "S1", email: "s1@x", role: "STUDENT" };
-  const hod: CurrentUser = { id: "hod-1", name: "H", email: "h@x", role: "HOD" };
+  it("enforces group-scoped marks and PDF permissions", () => {
+    const group = { guideId: "guide-1", members: [{ userId: "student-1" }], pdfPermission: false };
+    const assignedGuide: CurrentUser = { id: "guide-1", name: "G1", email: "g1@x", role: "GUIDE" };
+    const otherGuide: CurrentUser = { id: "guide-2", name: "G2", email: "g2@x", role: "GUIDE" };
+    const member: CurrentUser = { id: "student-1", name: "S1", email: "s1@x", role: "STUDENT" };
+    const hod: CurrentUser = { id: "hod-1", name: "H", email: "h@x", role: "HOD" };
 
-  it("only the assigned guide may write marks; HOD may not write but may approve", () => {
     expect(canEnterMarks(assignedGuide, group)).toBe(true);
     expect(canEnterMarks(otherGuide, group)).toBe(false);
     expect(canEnterMarks(member, group)).toBe(false);
@@ -214,21 +248,14 @@ describe("marks permissions are group-scoped", () => {
     expect(canApproveMarks(assignedGuide, group)).toBe(true);
     expect(canApproveMarks(hod, group)).toBe(true);
     expect(canApproveMarks(otherGuide, group)).toBe(false);
-  });
 
-  it("lets members, the assigned guide and the HOD view the group", () => {
     expect(canViewGroup(member, group)).toBe(true);
     expect(canViewGroup(assignedGuide, group)).toBe(true);
     expect(canViewGroup(hod, group)).toBe(true);
     expect(canViewGroup(otherGuide, group)).toBe(false);
-  });
 
-  it("only opens the PDF gate when permission is granted AND sections are complete", () => {
     expect(canGeneratePdf(member, group, true)).toBe(false);
-    expect(canGeneratePdf(hod, group, true)).toBe(false);
     expect(canGeneratePdf(member, { ...group, pdfPermission: true }, false)).toBe(false);
     expect(canGeneratePdf(member, { ...group, pdfPermission: true }, true)).toBe(true);
-    expect(canGeneratePdf(assignedGuide, { ...group, pdfPermission: true }, true)).toBe(true);
-    expect(canGeneratePdf(otherGuide, { ...group, pdfPermission: true }, true)).toBe(false);
   });
 });

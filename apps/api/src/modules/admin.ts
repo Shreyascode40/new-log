@@ -178,6 +178,7 @@ export async function createGuide(actor: AdminActor, input: unknown): Promise<{ 
         mobile: guideMobile || null,
         role: "GUIDE",
         passwordHash,
+        emailVerified: new Date(),
         emailVerifiedAt: new Date(),
         createdVia: "HOD_CREATED",
       },

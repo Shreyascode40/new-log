@@ -2,54 +2,66 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/auth/password-input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { resetPasswordAction } from "@/lib/actions/auth";
-import { passwordSchema } from "@/lib/validation/auth";
 
-type Values = { password: string; confirm: string };
+const formSchema = z
+  .object({
+    password: z
+      .string()
+      .min(8, "Password must be at least 8 characters")
+      .max(72, "Password is too long"),
+    confirm: z.string().min(1, "Please confirm your password"),
+  })
+  .refine((data) => data.password === data.confirm, {
+    message: "The two passwords do not match",
+    path: ["confirm"],
+  });
+
+type Values = z.infer<typeof formSchema>;
 
 export function ResetPasswordForm({ token }: { token: string }) {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
+  const [doneMessage, setDoneMessage] = useState<string | null>(null);
 
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<Values>({ defaultValues: { password: "", confirm: "" } });
+  } = useForm<Values>({
+    resolver: zodResolver(formSchema),
+    defaultValues: { password: "", confirm: "" },
+  });
 
   async function onSubmit(values: Values) {
     setFormError(null);
-    const passwordCheck = passwordSchema.safeParse(values.password);
-    if (!passwordCheck.success) {
-      setFormError(passwordCheck.error.issues[0]?.message ?? "Invalid password");
-      return;
-    }
-    if (values.password !== values.confirm) {
-      setFormError("The two passwords do not match");
-      return;
-    }
-
     const result = await resetPasswordAction({ token, password: values.password });
     if (!result.success) {
       setFormError(result.error);
       return;
     }
-    setDone(true);
-    setTimeout(() => router.push("/login"), 1500);
+    setDoneMessage(result.data?.message || "Password updated successfully. Redirecting you to sign in…");
+    setTimeout(() => router.push("/login"), 2000);
   }
 
-  if (done) {
+  if (doneMessage) {
     return (
-      <Alert>
-        <AlertDescription>Password updated. Redirecting you to sign in…</AlertDescription>
-      </Alert>
+      <div className="space-y-4">
+        <Alert>
+          <AlertDescription>{doneMessage}</AlertDescription>
+        </Alert>
+        <Button asChild className="w-full">
+          <Link href="/login">Go to sign in</Link>
+        </Button>
+      </div>
     );
   }
 
@@ -57,24 +69,58 @@ export function ResetPasswordForm({ token }: { token: string }) {
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
       {formError ? (
         <Alert variant="destructive">
-          <AlertDescription>{formError}</AlertDescription>
+          <AlertDescription>
+            <div className="space-y-2">
+              <p>{formError}</p>
+              {formError.includes("expired") || formError.includes("invalid") ? (
+                <div className="pt-1">
+                  <Button asChild variant="outline" size="sm" className="text-xs">
+                    <Link href="/forgot-password">Request a new reset link</Link>
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          </AlertDescription>
         </Alert>
       ) : null}
 
       <div className="space-y-1">
         <Label htmlFor="password">New password</Label>
-        <Input id="password" type="password" autoComplete="new-password" {...register("password")} />
-        {errors.password ? <p className="text-xs text-destructive">{errors.password.message}</p> : null}
+        <PasswordInput
+          id="password"
+          autoComplete="new-password"
+          placeholder="Enter new password"
+          {...register("password")}
+        />
+        {errors.password ? (
+          <p className="text-xs text-destructive">{errors.password.message}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground">Minimum 8 characters.</p>
+        )}
       </div>
 
       <div className="space-y-1">
         <Label htmlFor="confirm">Confirm new password</Label>
-        <Input id="confirm" type="password" autoComplete="new-password" {...register("confirm")} />
+        <PasswordInput
+          id="confirm"
+          autoComplete="new-password"
+          placeholder="Confirm new password"
+          {...register("confirm")}
+        />
+        {errors.confirm ? (
+          <p className="text-xs text-destructive">{errors.confirm.message}</p>
+        ) : null}
       </div>
 
       <Button type="submit" className="w-full" disabled={isSubmitting}>
-        {isSubmitting ? "Updating…" : "Update password"}
+        {isSubmitting ? "Resetting password…" : "Reset password"}
       </Button>
+
+      <div className="text-center pt-2">
+        <Link href="/login" className="text-xs text-muted-foreground hover:underline">
+          Back to sign in
+        </Link>
+      </div>
     </form>
   );
 }

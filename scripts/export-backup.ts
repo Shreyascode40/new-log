@@ -5,8 +5,8 @@ import { PrismaClient } from "@prisma/client";
 
 try { loadEnvFile(".env"); } catch {}
 
-// Prefer direct connection for backups to bypass connection pool timeouts
-const dbUrl = process.env.DIRECT_URL || process.env.DATABASE_URL;
+// Use DATABASE_URL with fallback to DIRECT_URL
+const dbUrl = process.env.DATABASE_URL || process.env.DIRECT_URL;
 const prisma = new PrismaClient({
   datasources: dbUrl ? { db: { url: dbUrl } } : undefined,
 });

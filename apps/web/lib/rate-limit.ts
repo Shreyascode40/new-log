@@ -60,7 +60,7 @@ export async function rateLimit(
         cache: "no-store",
       });
       if (!response.ok) throw new Error(`Upstash returned HTTP ${response.status}`);
-      const result = await response.json() as { result?: unknown };
+      const result = (await response.json()) as { result?: unknown };
       const count = Number(result.result);
       if (!Number.isFinite(count)) throw new Error("Upstash returned an invalid rate-limit count");
       return {
@@ -86,5 +86,6 @@ export function resetRateLimits(): void {
 export const RATE_LIMITS = {
   signup: { limit: 10, windowMs: 10 * 60 * 1000 },
   login: { limit: 15, windowMs: 5 * 60 * 1000 },
-  passwordReset: { limit: 10, windowMs: 15 * 60 * 1000 },
+  passwordReset: { limit: 5, windowMs: 15 * 60 * 1000 },
+  resendVerification: { limit: 3, windowMs: 15 * 60 * 1000 },
 } as const;

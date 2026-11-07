@@ -10,8 +10,11 @@ export class AuthError extends Error {
       | "EMAIL_TAKEN"
       | "ROLL_TAKEN"
       | "INVALID_TOKEN"
+      | "EXPIRED_TOKEN"
+      | "ALREADY_VERIFIED"
       | "USER_NOT_FOUND"
-      | "EMAIL_FAILED",
+      | "EMAIL_FAILED"
+      | "RATE_LIMITED",
     message: string,
   ) {
     super(message);
@@ -40,6 +43,19 @@ export function emailVerificationRequired(): boolean {
   return process.env.REQUIRE_EMAIL_VERIFICATION !== "false";
 }
 
+function getWebOrigin(): string | undefined {
+  if (process.env.NEXTAUTH_URL) {
+    return process.env.NEXTAUTH_URL.replace(/\/$/, "");
+  }
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`.replace(/\/$/, "");
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`.replace(/\/$/, "");
+  }
+  return undefined;
+}
+
 function toAuthError(error: unknown): never {
   if (error instanceof BackendApiError && error.code) {
     throw new AuthError(error.code as AuthError["code"], error.message);
@@ -54,11 +70,17 @@ function toAuthError(error: unknown): never {
 export async function signupStudent(input: unknown): Promise<{
   userId: string;
   verificationUrl?: string;
+  message: string;
 }> {
   try {
-    return await backendSystemApi<{ userId: string; verificationUrl?: string }>("/v1/auth/signup", {
+    const webUrl = getWebOrigin();
+    const payload = {
+      ...(typeof input === "object" && input !== null ? input : {}),
+      ...(webUrl ? { webUrl } : {}),
+    };
+    return await backendSystemApi<{ userId: string; verificationUrl?: string; message: string }>("/v1/auth/signup", {
       method: "POST",
-      body: JSON.stringify(input),
+      body: JSON.stringify(payload),
     });
   } catch (error) {
     toAuthError(error);
@@ -78,9 +100,9 @@ export async function authenticate(email: string, password: string): Promise<Aut
 }
 
 /** Consumes a single-use email verification token. */
-export async function verifyEmail(rawToken: string): Promise<{ email: string }> {
+export async function verifyEmail(rawToken: string): Promise<{ email: string; alreadyVerified?: boolean }> {
   try {
-    return await backendSystemApi<{ email: string }>("/v1/auth/verify-email", {
+    return await backendSystemApi<{ email: string; alreadyVerified?: boolean }>("/v1/auth/verify-email", {
       method: "POST",
       body: JSON.stringify({ token: rawToken }),
     });
@@ -89,12 +111,48 @@ export async function verifyEmail(rawToken: string): Promise<{ email: string }> 
   }
 }
 
-/** Starts a password reset via the backend API. */
-export async function requestPasswordReset(input: unknown): Promise<{ resetUrl?: string }> {
+/** Resends a verification email. */
+export async function resendVerificationEmail(input: unknown): Promise<{
+  success: true;
+  message: string;
+  alreadyVerified?: boolean;
+  verificationUrl?: string;
+}> {
   try {
-    return await backendSystemApi<{ resetUrl?: string }>("/v1/auth/forgot-password", {
+    const webUrl = getWebOrigin();
+    const payload = {
+      ...(typeof input === "object" && input !== null ? input : {}),
+      ...(webUrl ? { webUrl } : {}),
+    };
+    return await backendSystemApi<{
+      success: true;
+      message: string;
+      alreadyVerified?: boolean;
+      verificationUrl?: string;
+    }>("/v1/auth/resend-verification", {
       method: "POST",
-      body: JSON.stringify(input),
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    toAuthError(error);
+  }
+}
+
+/** Starts a password reset via the backend API. */
+export async function requestPasswordReset(input: unknown): Promise<{
+  success: true;
+  message: string;
+  resetUrl?: string;
+}> {
+  try {
+    const webUrl = getWebOrigin();
+    const payload = {
+      ...(typeof input === "object" && input !== null ? input : {}),
+      ...(webUrl ? { webUrl } : {}),
+    };
+    return await backendSystemApi<{ success: true; message: string; resetUrl?: string }>("/v1/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify(payload),
     });
   } catch (error) {
     toAuthError(error);
@@ -102,9 +160,12 @@ export async function requestPasswordReset(input: unknown): Promise<{ resetUrl?:
 }
 
 /** Completes a password reset with a single-use token. */
-export async function resetPassword(input: unknown): Promise<void> {
+export async function resetPassword(input: unknown): Promise<{
+  success: true;
+  message: string;
+}> {
   try {
-    await backendSystemApi<{ success: true }>("/v1/auth/reset-password", {
+    return await backendSystemApi<{ success: true; message: string }>("/v1/auth/reset-password", {
       method: "POST",
       body: JSON.stringify(input),
     });

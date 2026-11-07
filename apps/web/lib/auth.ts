@@ -22,19 +22,26 @@ export const authOptions: NextAuthOptions = {
         const parsed = loginSchema.safeParse(credentials);
         if (!parsed.success) return null;
 
-        // Throttle login attempts per email address (in addition to IP-level
-        // limits applied by the host/proxy in production).
+        // Throttle login attempts per email address
         const limit = await rateLimit(
           `login:${parsed.data.email}`,
           RATE_LIMITS.login.limit,
           RATE_LIMITS.login.windowMs,
         );
-        if (!limit.ok) return null;
+        if (!limit.ok) {
+          throw new Error("RATE_LIMITED");
+        }
 
-        // Unverified or inactive accounts intentionally return null: NextAuth
-        // then refuses the login and the client shows a single generic message.
         const result = await authenticate(parsed.data.email, parsed.data.password);
-        if (!result.ok) return null;
+        if (!result.ok) {
+          if (result.reason === "EMAIL_NOT_VERIFIED") {
+            throw new Error("EMAIL_NOT_VERIFIED");
+          }
+          if (result.reason === "ACCOUNT_INACTIVE") {
+            throw new Error("ACCOUNT_INACTIVE");
+          }
+          return null;
+        }
 
         return {
           id: result.user.id,
@@ -62,7 +69,6 @@ export const authOptions: NextAuthOptions = {
         const parsedUrl = new URL(url);
         const parsedBase = new URL(base);
         // Only allow exact origin match, or exact matching deployed Vercel hostname.
-        // Arbitrary external .vercel.app subdomains are strictly forbidden.
         if (
           parsedUrl.origin === parsedBase.origin ||
           (process.env.VERCEL_URL && parsedUrl.hostname === process.env.VERCEL_URL)

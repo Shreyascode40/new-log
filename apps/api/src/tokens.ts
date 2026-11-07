@@ -16,9 +16,9 @@ export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-/** Default lifetimes. */
-export const EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000; // 24h
-export const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000; // 1h
+/** Tokens expire after 30 minutes. */
+export const EMAIL_VERIFICATION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+export const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 export function expiresIn(ttlMs: number, from: Date = new Date()): Date {
   return new Date(from.getTime() + ttlMs);

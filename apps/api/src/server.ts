@@ -159,6 +159,7 @@ import {
   resetPassword,
   signupStudent,
   verifyEmail,
+  resendVerificationEmail,
 } from "./modules/auth.js";
 
 
@@ -411,6 +412,11 @@ async function handleAuthRequest(
     if (method === "POST" && pathname === "/v1/auth/login") {
       const body = (await readJson(request)) as { email?: string; password?: string };
       sendJson(response, 200, await authenticate(body.email ?? "", body.password ?? ""));
+      return true;
+    }
+    if (method === "POST" && pathname === "/v1/auth/resend-verification") {
+      const body = await readJson(request);
+      sendJson(response, 200, await resendVerificationEmail(body));
       return true;
     }
     if (method === "POST" && pathname === "/v1/auth/verify-email") {

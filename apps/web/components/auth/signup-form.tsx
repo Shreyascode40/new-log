@@ -10,14 +10,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/auth/password-input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { signUpAction } from "@/lib/actions/auth";
+import { signUpAction, resendVerificationAction } from "@/lib/actions/auth";
 import { signupSchema } from "@/lib/validation/auth";
 
 type SignupValues = z.infer<typeof signupSchema>;
 
 export function SignupForm({ verificationRequired }: { verificationRequired: boolean }) {
   const [formError, setFormError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ verificationUrl?: string } | null>(null);
+  const [done, setDone] = useState<{ verificationUrl?: string; message?: string } | null>(null);
+  const [registeredEmail, setRegisteredEmail] = useState<string>("");
+  const [isResending, setIsResending] = useState(false);
+  const [resendStatus, setResendStatus] = useState<string | null>(null);
+  const [resendDevUrl, setResendDevUrl] = useState<string | null>(null);
+  const [cooldown, setCooldown] = useState(0);
 
   const {
     register,
@@ -28,13 +33,44 @@ export function SignupForm({ verificationRequired }: { verificationRequired: boo
     defaultValues: { name: "", email: "", rollNo: "", mobile: "", password: "" },
   });
 
+  async function handleResendVerification() {
+    if (!registeredEmail) return;
+    setIsResending(true);
+    setResendStatus(null);
+    setResendDevUrl(null);
+
+    const result = await resendVerificationAction({ email: registeredEmail });
+    setIsResending(false);
+
+    if (result.success) {
+      setResendStatus("A new verification link has been sent to your email.");
+      if (result.data.verificationUrl) {
+        setResendDevUrl(result.data.verificationUrl);
+      }
+      setCooldown(60);
+      const timer = setInterval(() => {
+        setCooldown((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } else {
+      setResendStatus(result.error);
+    }
+  }
+
   async function onSubmit(values: SignupValues) {
     setFormError(null);
+    setResendStatus(null);
     const result = await signUpAction(values);
     if (!result.success) {
       setFormError(result.error);
       return;
     }
+    setRegisteredEmail(values.email);
     setDone(result.data);
   }
 
@@ -44,21 +80,50 @@ export function SignupForm({ verificationRequired }: { verificationRequired: boo
         <Alert>
           <AlertDescription>
             {verificationRequired
-              ? "Account created. We sent a verification link to your email — open it to activate your account, then sign in."
-              : "Account created. You can sign in right away — no verification needed."}
+              ? done.message || "Your account has been created. Please check your email to verify your account."
+              : "Your account has been created. You can sign in right away."}
           </AlertDescription>
         </Alert>
-        {done.verificationUrl ? (
+
+        {verificationRequired ? (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              Didn&apos;t receive the email? Check your spam folder or click below to resend.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleResendVerification}
+              disabled={isResending || cooldown > 0}
+              className="w-full text-xs"
+            >
+              {isResending
+                ? "Sending…"
+                : cooldown > 0
+                  ? `Resend available in ${cooldown}s`
+                  : "Resend verification email"}
+            </Button>
+          </div>
+        ) : null}
+
+        {resendStatus ? (
+          <Alert>
+            <AlertDescription>{resendStatus}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {done.verificationUrl || resendDevUrl ? (
           <Alert>
             <AlertDescription>
-              <span className="font-medium">Development mode:</span> no mailbox is configured, so
-              use this link directly.{" "}
-              <Link className="underline" href={done.verificationUrl}>
+              <span className="font-medium">Development link:</span>{" "}
+              <Link className="underline" href={resendDevUrl || done.verificationUrl || "#"}>
                 Verify my email
               </Link>
             </AlertDescription>
           </Alert>
         ) : null}
+
         <Button asChild className="w-full">
           <Link href="/login">Go to sign in</Link>
         </Button>

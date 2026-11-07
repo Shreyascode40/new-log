@@ -1,8 +1,6 @@
-import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
 import { AuthError, verifyEmail } from "@/lib/services/auth";
+import { VerifyEmailView } from "@/components/auth/verify-email-view";
 
 export const metadata = { title: "Verify email — Digital BE Log Book" };
 
@@ -12,17 +10,27 @@ export default async function VerifyEmailPage({
   searchParams?: { token?: string };
 }) {
   const token = searchParams?.token;
-  let error: string | null = null;
+  let errorMessage: string | null = null;
+  let errorCode: string | null = null;
   let verifiedEmail: string | null = null;
+  let alreadyVerified = false;
 
   if (!token) {
-    error = "This link is missing its verification token.";
+    errorMessage = "This link is missing its verification token.";
+    errorCode = "INVALID_TOKEN";
   } else {
     try {
       const result = await verifyEmail(token);
       verifiedEmail = result.email;
+      alreadyVerified = Boolean(result.alreadyVerified);
     } catch (e) {
-      error = e instanceof AuthError ? e.message : "We could not verify this link.";
+      if (e instanceof AuthError) {
+        errorMessage = e.message;
+        errorCode = e.code;
+      } else {
+        errorMessage = "We could not verify this link. Please request a new one.";
+        errorCode = "UNKNOWN";
+      }
     }
   }
 
@@ -32,29 +40,13 @@ export default async function VerifyEmailPage({
         <CardTitle>Email verification</CardTitle>
         <CardDescription>Activate your account to sign in.</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {verifiedEmail ? (
-          <>
-            <Alert>
-              <AlertDescription>
-                Your email <span className="font-medium">{verifiedEmail}</span> is verified. You can
-                now sign in.
-              </AlertDescription>
-            </Alert>
-            <Button asChild className="w-full">
-              <Link href="/login">Go to sign in</Link>
-            </Button>
-          </>
-        ) : (
-          <>
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-            <Button asChild variant="outline" className="w-full">
-              <Link href="/login">Back to sign in</Link>
-            </Button>
-          </>
-        )}
+      <CardContent>
+        <VerifyEmailView
+          verifiedEmail={verifiedEmail}
+          alreadyVerified={alreadyVerified}
+          errorMessage={errorMessage}
+          errorCode={errorCode}
+        />
       </CardContent>
     </Card>
   );
